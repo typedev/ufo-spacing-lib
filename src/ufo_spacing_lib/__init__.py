@@ -62,6 +62,9 @@ from .contexts import FontContext
 from .editors.kerning import KerningEditor
 from .editors.margins import MarginsEditor
 
+# Virtual font for preview/simulation
+from .virtual import VirtualFont, VirtualGroups, VirtualKerning
+
 # Groups management
 from .groups_core import (
     EDITMODE_KERNING,
@@ -85,6 +88,10 @@ __all__ = [
     "__version__",
     # Contexts
     "FontContext",
+    # Virtual font
+    "VirtualFont",
+    "VirtualKerning",
+    "VirtualGroups",
     # Editors
     "KerningEditor",
     "MarginsEditor",

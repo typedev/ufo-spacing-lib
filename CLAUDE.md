@@ -61,6 +61,14 @@ The library uses the Command pattern for all font modifications:
 - Properties: `left`, `right`, `value`, `is_exception`, `left_group`, `right_group`
 - Helper properties: `exception_side`, `is_left_exception`, `is_right_exception`, `is_orphan`
 
+**VirtualFont** (`virtual.py`): Font-like wrapper for preview/simulation
+- Isolates kerning/groups changes from source font (for "what-if" scenarios)
+- Glyph access delegates to source font (live data)
+- Factory: `VirtualFont.from_font(font)` creates copy of kerning/groups with reference to font
+- Diff tracking: `get_kerning_diff()`, `get_groups_diff()`, `has_changes()`
+- Apply changes: `apply_to(font)` writes changes to real font
+- Reset: `reset()`, `reset_kerning()`, `reset_groups()`
+
 ### Group Naming Conventions
 - Kerning groups: `public.kern1.*` (left side), `public.kern2.*` (right side)
 - Margins groups: `com.typedev.margins1.*`, `com.typedev.margins2.*`

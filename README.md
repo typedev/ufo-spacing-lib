@@ -7,16 +7,21 @@ A framework-agnostic Python library for managing font spacing (kerning and margi
 - **Framework Independent**: Works with any font editor that provides compatible font objects
 - **Undo/Redo Support**: Full command pattern implementation with unlimited history
 - **Multi-Font Operations**: Support for linked/interpolated fonts with per-font scaling
+- **Preview/Simulation**: VirtualFont wrapper for testing changes without modifying real font
 - **Composite Propagation**: Automatic margin propagation to composite glyphs
 - **Well Documented**: Comprehensive docstrings and type hints throughout
 
 ## Installation
 
 ```bash
-# From the repository root
-pip install -e ./source/ufo_spacing_lib
+# From PyPI (when published)
+pip install ufo-spacing-lib
 
-# Or copy the ufo_spacing_lib folder to your project
+# From source
+pip install -e .
+
+# Or with uv
+uv pip install -e .
 ```
 
 ## Quick Start
@@ -118,6 +123,32 @@ editor.on_undo = on_kerning_change
 editor.on_redo = on_kerning_change
 ```
 
+### Preview/Simulation (VirtualFont)
+
+```python
+from ufo_spacing_lib import VirtualFont, FontContext, AdjustKerningCommand
+
+# Create virtual copy - isolates kerning/groups changes
+virtual = VirtualFont.from_font(font)
+
+# Work as usual - changes only affect virtual.kerning/groups
+context = FontContext.from_single_font(virtual)
+cmd = AdjustKerningCommand(pair=('A', 'V'), delta=-10)
+editor.execute(cmd, context)
+
+# Glyphs are live references - changes in font visible through virtual
+print(virtual['A'].leftMargin)  # Same as font['A'].leftMargin
+
+# Check what changed
+if virtual.has_changes():
+    for pair, (old, new) in virtual.get_kerning_diff().items():
+        print(f"{pair}: {old} -> {new}")
+
+# Apply to real font when ready, or reset
+virtual.apply_to(font)  # Writes changes to font
+# virtual.reset()       # Discards all changes
+```
+
 ## Architecture
 
 ```
@@ -125,21 +156,16 @@ ufo_spacing_lib/
 ├── __init__.py          # Main exports
 ├── contexts.py          # FontContext class
 ├── groups_core.py       # FontGroupsManager, KernPairInfo, resolve_kern_pair
+├── virtual.py           # VirtualFont for preview/simulation
 ├── commands/
 │   ├── __init__.py
 │   ├── base.py          # Command ABC, CommandResult
 │   ├── kerning.py       # Kerning commands
 │   └── margins.py       # Margins commands
-├── editors/
-│   ├── __init__.py
-│   ├── kerning.py       # KerningEditor
-│   └── margins.py       # MarginsEditor
-└── tests/
+└── editors/
     ├── __init__.py
-    ├── mocks.py         # MockFont, MockGlyph, etc.
-    ├── test_kerning_commands.py
-    ├── test_editors.py
-    └── test_groups_manager.py
+    ├── kerning.py       # KerningEditor
+    └── margins.py       # MarginsEditor
 ```
 
 ## Font Object Interface
@@ -208,21 +234,17 @@ All commands support:
 
 ## Testing
 
-The library includes 75+ unit tests covering all components.
+The library includes 100+ unit tests covering all components.
 
 ```bash
-cd source
-
 # Run all tests
-python3 -m unittest ufo_spacing_lib.tests.test_kerning_commands \
-                    ufo_spacing_lib.tests.test_editors \
-                    ufo_spacing_lib.tests.test_groups_manager -v
+PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 # Run specific test module
-python3 -m unittest ufo_spacing_lib.tests.test_kerning_commands -v
+PYTHONPATH=src python3 -m unittest tests.test_kerning_commands -v
 
 # With pytest (if installed)
-python3 -m pytest ufo_spacing_lib/tests/ -v
+PYTHONPATH=src python3 -m pytest tests/ -v
 ```
 
 ### Test Coverage
@@ -232,6 +254,7 @@ python3 -m pytest ufo_spacing_lib/tests/ -v
 | Kerning Commands | 25 | SetKerning, AdjustKerning, RemoveKerning, CreateException |
 | Editors | 20 | KerningEditor, MarginsEditor, undo/redo, callbacks |
 | Groups Manager | 30 | FontGroupsManager, add/remove/delete/rename groups |
+| VirtualFont | 27 | Creation, isolation, glyph access, diff tracking, apply/reset |
 
 ## License
 
