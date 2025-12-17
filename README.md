@@ -239,5 +239,7 @@ MIT License
 
 ## Author
 
-TypeDev
+Alexander Lubovenko 
+lubovenko@gmail.com 
+github.com/typedev
 
