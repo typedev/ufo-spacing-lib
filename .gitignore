@@ -45,4 +45,5 @@ htmlcov/
 # Build
 dist/
 *.whl
-
+PUBLISHING.md
+.claude/

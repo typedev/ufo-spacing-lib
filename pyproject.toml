@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "Alexander Lubovenko", email = "your.email@example.com" }
+    { name = "Alexander Lubovenko", email = "lubovenko@gmail.com" }
 ]
 keywords = [
     "font",
