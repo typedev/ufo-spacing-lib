@@ -48,6 +48,12 @@ __author__ = "Alexander Lubovenko"
 # Core components
 # Commands
 from .commands.base import Command, CommandResult
+from .commands.groups import (
+    AddGlyphsToGroupCommand,
+    DeleteGroupCommand,
+    RemoveGlyphsFromGroupCommand,
+    RenameGroupCommand,
+)
 from .commands.kerning import (
     AdjustKerningCommand,
     CreateExceptionCommand,
@@ -61,6 +67,7 @@ from .commands.margins import (
 from .contexts import FontContext
 from .editors.kerning import KerningEditor
 from .editors.margins import MarginsEditor
+from .editors.spacing import SpacingEditor
 
 # Virtual font for preview/simulation
 from .virtual import VirtualFont, VirtualGroups, VirtualKerning
@@ -95,13 +102,21 @@ __all__ = [
     # Editors
     "KerningEditor",
     "MarginsEditor",
-    # Commands
+    "SpacingEditor",
+    # Commands - Base
     "Command",
     "CommandResult",
+    # Commands - Kerning
     "SetKerningCommand",
     "AdjustKerningCommand",
     "RemoveKerningCommand",
     "CreateExceptionCommand",
+    # Commands - Groups
+    "AddGlyphsToGroupCommand",
+    "RemoveGlyphsFromGroupCommand",
+    "DeleteGroupCommand",
+    "RenameGroupCommand",
+    # Commands - Margins
     "SetMarginCommand",
     "AdjustMarginCommand",
     # Groups

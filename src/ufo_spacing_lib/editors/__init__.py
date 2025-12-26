@@ -34,9 +34,11 @@ Example:
 
 from .kerning import KerningEditor
 from .margins import MarginsEditor
+from .spacing import SpacingEditor
 
 __all__ = [
     "KerningEditor",
     "MarginsEditor",
+    "SpacingEditor",
 ]
 
