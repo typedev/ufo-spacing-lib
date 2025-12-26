@@ -112,6 +112,43 @@ editor.execute(cmd, context)
 # light_master: -8, regular_master: -10, bold_master: -13
 ```
 
+### Group Operations with Undo/Redo
+
+```python
+from ufo_spacing_lib import (
+    SpacingEditor,
+    FontContext,
+    FontGroupsManager,
+    AddGlyphsToGroupCommand,
+    RemoveGlyphsFromGroupCommand,
+    AdjustKerningCommand,
+)
+
+# SpacingEditor provides unified undo/redo for kerning AND groups
+editor = SpacingEditor()
+context = FontContext.from_single_font(font)
+manager = FontGroupsManager(font)
+
+# Execute kerning command
+cmd1 = AdjustKerningCommand(pair=('A', 'V'), delta=-10)
+editor.execute(cmd1, context)
+
+# Execute group command (same editor, same history!)
+cmd2 = AddGlyphsToGroupCommand(
+    group_name='public.kern1.A',
+    glyphs=['Aacute', 'Agrave'],
+    groups_manager=manager,
+    check_kerning=True,  # Automatically handles kerning exceptions
+)
+editor.execute(cmd2, context)
+
+# Undo works across both kerning and groups
+editor.undo()  # Undoes group command
+editor.undo()  # Undoes kerning command
+editor.redo()  # Redoes kerning command
+editor.redo()  # Redoes group command
+```
+
 ### Event Callbacks
 
 ```python
@@ -304,6 +341,7 @@ virtual.reset_groups()   # Reset only groups
 
 | Class | Description |
 |-------|-------------|
+| `SpacingEditor` | **Unified editor** for kerning, margins, and groups (recommended) |
 | `KerningEditor` | Editor with undo/redo for kerning operations |
 | `MarginsEditor` | Editor with undo/redo for margins operations |
 
@@ -331,6 +369,15 @@ virtual.reset_groups()   # Reset only groups
 | `AdjustKerningCommand` | `pair`, `delta`, `remove_zero=True` | Adjust kerning by delta |
 | `RemoveKerningCommand` | `pair` | Remove a kerning pair |
 | `CreateExceptionCommand` | `pair`, `value=0`, `side='left'` | Create kerning exception |
+
+#### Group Commands
+
+| Command | Parameters | Description |
+|---------|------------|-------------|
+| `AddGlyphsToGroupCommand` | `group_name`, `glyphs`, `groups_manager`, `check_kerning=True` | Add glyphs to a kerning group |
+| `RemoveGlyphsFromGroupCommand` | `group_name`, `glyphs`, `groups_manager`, `check_kerning=True` | Remove glyphs from a group |
+| `DeleteGroupCommand` | `group_name`, `groups_manager`, `check_kerning=True` | Delete entire group |
+| `RenameGroupCommand` | `old_name`, `new_name`, `groups_manager`, `check_kerning=True` | Rename a group |
 
 #### Margins Commands
 
@@ -408,9 +455,11 @@ ufo_spacing_lib/
 │   ├── __init__.py
 │   ├── base.py          # Command ABC, CommandResult
 │   ├── kerning.py       # Kerning commands
+│   ├── groups.py        # Group commands (Add, Remove, Delete, Rename)
 │   └── margins.py       # Margins commands
 └── editors/
     ├── __init__.py
+    ├── spacing.py       # SpacingEditor (unified, recommended)
     ├── kerning.py       # KerningEditor
     └── margins.py       # MarginsEditor
 ```
@@ -471,7 +520,7 @@ class Font:
 
 ## Testing
 
-The library includes 100+ unit tests covering all components.
+The library includes 128 unit tests covering all components.
 
 ```bash
 # Run all tests
@@ -492,7 +541,8 @@ uv run pytest tests/test_groups_manager.py::TestResolvePair -v
 | Module | Tests | Coverage |
 |--------|-------|----------|
 | Kerning Commands | 25 | SetKerning, AdjustKerning, RemoveKerning, CreateException |
-| Editors | 20 | KerningEditor, MarginsEditor, undo/redo, callbacks |
+| **Group Commands** | **26** | AddGlyphsToGroup, RemoveGlyphsFromGroup, DeleteGroup, RenameGroup |
+| Editors | 20 | KerningEditor, MarginsEditor, SpacingEditor, undo/redo, callbacks |
 | Groups Manager | 30 | FontGroupsManager, add/remove/delete/rename groups |
 | VirtualFont | 27 | Creation, isolation, glyph access, diff tracking, apply/reset |
 

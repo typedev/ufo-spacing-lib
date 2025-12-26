@@ -290,6 +290,37 @@ version = "0.1.0"  # -> "0.1.1" -> "0.2.0" -> "1.0.0"
 
 ---
 
+## Шаги для обновления:
+
+  1. Обновить версию в двух местах:
+
+  # pyproject.toml
+  version = "0.2.0"
+
+  # src/ufo_spacing_lib/__init__.py
+  __version__ = "0.2.0"
+
+  2. Собрать пакет:
+
+  uv build
+  # или
+  python -m build
+
+  3. Загрузить на PyPI:
+
+  # С twine (классический способ)
+  twine upload dist/*
+
+  # Или с uv (если настроено)
+  uv publish
+
+  Требования:
+  - Аккаунт на pypi.org
+  - API token (создать на https://pypi.org/manage/account/token/)
+  - Настроить ~/.pypirc или передать token через переменную TWINE_PASSWORD
+
+
+
 ## Быстрый старт (одной командой)
 
 ```bash

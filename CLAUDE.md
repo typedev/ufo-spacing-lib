@@ -22,6 +22,9 @@ uv run pytest tests/test_kerning_commands.py -v
 # Run single test
 uv run pytest tests/test_kerning_commands.py::TestSetKerningCommand::test_set_kerning -v
 
+# Run group commands tests
+uv run pytest tests/test_groups_commands.py -v
+
 # Linting
 uv run ruff check src/ tests/
 uv run ruff check --fix src/ tests/
@@ -48,9 +51,9 @@ The library uses the Command pattern for all font modifications:
 - Factory methods: `from_single_font()`, `from_linked_fonts()`
 
 **Editors** (`editors/`): Command executors with undo/redo history
-- `KerningEditor` and `MarginsEditor` have identical APIs
-- Maintain separate undo/redo stacks
-- Support event callbacks: `on_change`, `on_undo`, `on_redo`
+- `SpacingEditor` - **unified editor** for kerning, groups, and margins (recommended)
+- `KerningEditor` and `MarginsEditor` - separate editors (legacy)
+- All editors maintain undo/redo stacks and support event callbacks: `on_change`, `on_undo`, `on_redo`
 
 **FontGroupsManager** (`groups_core.py`): Manages kerning/margins groups
 - Maintains reverse mappings (glyph → group) for O(1) lookups
@@ -68,6 +71,13 @@ The library uses the Command pattern for all font modifications:
 - Diff tracking: `get_kerning_diff()`, `get_groups_diff()`, `has_changes()`
 - Apply changes: `apply_to(font)` writes changes to real font
 - Reset: `reset()`, `reset_kerning()`, `reset_groups()`
+
+**Group Commands** (`commands/groups.py`): Undoable group operations
+- `AddGlyphsToGroupCommand` - add glyphs to kerning group with automatic kerning handling
+- `RemoveGlyphsFromGroupCommand` - remove glyphs, creating exception pairs
+- `DeleteGroupCommand` - delete group, preserving kerning as exceptions
+- `RenameGroupCommand` - rename group, updating all kerning references
+- All commands store kerning state (pairs with values) for complete undo/redo
 
 ### Group Naming Conventions
 - Kerning groups: `public.kern1.*` (left side), `public.kern2.*` (right side)
