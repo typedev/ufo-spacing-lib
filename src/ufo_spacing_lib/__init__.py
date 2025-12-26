@@ -39,11 +39,11 @@ License:
     MIT License
 
 Author:
-    TypeDev
+    Alexander Lubovenko (typedev)
 """
 
-__version__ = "0.1.0"
-__author__ = "TypeDev"
+__version__ = "0.1.1"
+__author__ = "Alexander Lubovenko"
 
 # Core components
 # Commands
