@@ -95,13 +95,48 @@ GROUP_NOT_FOUNDED = 3
 
 
 class ExceptionSide(Enum):
-    """Describes which side of the kerning pair has an exception."""
+    """
+    Describes the exception status of a resolved kerning pair.
 
-    NONE = auto()  # Not an exception (normal group or glyph pair)
-    LEFT = auto()  # Exception on left side only
-    RIGHT = auto()  # Exception on right side only
-    BOTH = auto()  # Exception on both sides (orphan)
-    GLYPH_PAIR = auto()  # Glyph-glyph pair (both match groups but marked as exception)
+    This enum is returned by KernPairInfo.exception_side property after
+    resolve_kern_pair() processes a glyph pair.
+
+    Values:
+        NONE: Input glyph names resolved to groups, and the group-group pair
+              exists in kerning. This is the normal case - not an exception.
+
+        LEFT: Left side is an exception. The left glyph belongs to a group,
+              but a specific glyph-group pair exists in kerning instead of
+              the group-group pair.
+
+        RIGHT: Right side is an exception. The right glyph belongs to a group,
+               but a specific group-glyph pair exists in kerning.
+
+        BOTH: Both sides are exceptions (orphan pair). Both glyphs belong to
+              groups, but a specific glyph-glyph pair exists in kerning.
+
+        DIRECT_KEY: Input was already kerning keys (group names), not glyph names.
+                    The pair exists in kerning as given. This typically occurs
+                    when resolve_kern_pair() is called with group names like
+                    ('public.kern1.A', 'public.kern2.t') instead of glyph names.
+                    Not an exception in the traditional sense, but indicates
+                    unusual input that may need attention.
+
+    Note:
+        For most UI purposes, both NONE and DIRECT_KEY mean "not an exception".
+        The distinction exists because DIRECT_KEY indicates the input wasn't
+        resolved (it was already in key form), which may be relevant for
+        debugging or validation.
+    """
+
+    NONE = auto()
+    LEFT = auto()
+    RIGHT = auto()
+    BOTH = auto()
+    DIRECT_KEY = auto()
+
+    # Backward compatibility alias
+    GLYPH_PAIR = DIRECT_KEY
 
 
 # =============================================================================
@@ -140,8 +175,12 @@ class KernPairInfo:
         """
         Determines which side has the exception.
 
-        This property encapsulates the complex comparison logic that was
-        previously scattered across multiple call sites.
+        Returns:
+            ExceptionSide.NONE: No exception (normal group-group pair)
+            ExceptionSide.LEFT: Exception on left side only
+            ExceptionSide.RIGHT: Exception on right side only
+            ExceptionSide.BOTH: Exception on both sides (orphan)
+            ExceptionSide.DIRECT_KEY: Input was already kerning keys (group names)
         """
         if not self.is_exception:
             return ExceptionSide.NONE
@@ -150,7 +189,7 @@ class KernPairInfo:
         right_differs = self.right != self.right_group
 
         if not left_differs and not right_differs:
-            return ExceptionSide.GLYPH_PAIR
+            return ExceptionSide.DIRECT_KEY
         if left_differs and not right_differs:
             return ExceptionSide.LEFT
         if right_differs and not left_differs:
@@ -188,12 +227,12 @@ def cut_unique_suffix(name: str) -> str:
     Remove unique numeric suffix from glyph name.
 
     Examples:
-        'A.12345' → 'A'
+        'A.uuid12345' → 'A'
         'A.ss01'  → 'A.ss01' (not numeric, kept)
         'A'       → 'A'
     """
-    if "." in name:
-        parts = name.rsplit(".", 1)
+    if ".uuid" in name:
+        parts = name.rsplit(".uuid", 1)
         if parts[1].isdigit():
             return parts[0]
     return name
@@ -1337,7 +1376,8 @@ def get_kern_pair_notes_v2(
     # Simplified exception handling using exception_side property
     if pair_info.is_exception:
         match pair_info.exception_side:
-            case ExceptionSide.GLYPH_PAIR:
+            case ExceptionSide.DIRECT_KEY:
+                # Input was already kerning keys (group names), not glyph names
                 return (
                     PAIR_INFO_ATTENTION,
                     pair_info.left_group,
@@ -1375,9 +1415,11 @@ def get_kern_pair_notes_v2(
 #   pair['R_nameForKern'] -> pair.right_group
 #
 # Exception type checks:
-#   if L == L_group and R == R_group  -> pair.exception_side == ExceptionSide.GLYPH_PAIR
+#   if L == L_group and R == R_group  -> pair.exception_side == ExceptionSide.DIRECT_KEY
 #   if L != L_group and R != R_group  -> pair.exception_side == ExceptionSide.BOTH
 #   if L != L_group xor R != R_group  -> pair.exception_side in (LEFT, RIGHT)
+#
+# Note: GLYPH_PAIR is deprecated, use DIRECT_KEY instead (GLYPH_PAIR is kept as alias)
 #
 # Shortcut properties:
 #   pair.is_left_exception  - True if only left side differs
