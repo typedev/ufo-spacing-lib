@@ -253,3 +253,173 @@ class RemoveMetricsRuleCommand(Command):
                     manager.set_rule(self.glyph, side, rule)
 
         return CommandResult.ok(f"Restored rules for {self.glyph}")
+
+
+class SyncRulesCommand(Command):
+    """
+    Command to synchronize all rules (batch apply).
+
+    This command applies all metrics rules to their dependent glyphs.
+    Use this when you've made multiple margin changes with apply_rules=False
+    and want to synchronize all dependents in one operation.
+
+    The command:
+    1. Collects all affected glyphs via topological sort
+    2. Applies rules in correct dependency order
+    3. Supports full undo
+
+    Attributes:
+        source_glyphs: Optional list of glyphs that changed. If None,
+            syncs all glyphs that have dependents.
+
+    Example:
+        >>> # Make changes without triggering rules
+        >>> editor.execute(AdjustMarginCommand("A", "left", 10, apply_rules=False))
+        >>> editor.execute(AdjustMarginCommand("H", "left", 5, apply_rules=False))
+        >>>
+        >>> # Sync all rules at once
+        >>> editor.execute(SyncRulesCommand(["A", "H"]))
+        >>>
+        >>> # Or sync everything
+        >>> editor.execute(SyncRulesCommand())
+    """
+
+    def __init__(self, source_glyphs: list[str] | None = None):
+        """
+        Initialize the command.
+
+        Args:
+            source_glyphs: Optional list of glyphs that changed.
+                If None, syncs all glyphs with dependents.
+        """
+        self.source_glyphs = source_glyphs
+        # Previous margin values per font for undo: {font_id: {glyph: {side: value}}}
+        self._previous_values: dict[int, dict[str, dict[str, int | None]]] = {}
+        # Glyphs that were actually modified
+        self._affected_glyphs: list[str] = []
+
+    @property
+    def description(self) -> str:
+        """Human-readable description of the command."""
+        if self.source_glyphs:
+            return f"Sync rules for {len(self.source_glyphs)} glyphs"
+        return "Sync all rules"
+
+    def execute(
+        self,
+        context: FontContext,
+        rules_managers: dict[int, MetricsRulesManager] | None = None,
+    ) -> CommandResult:
+        """
+        Execute the command, applying all rules.
+
+        Args:
+            context: Font context containing fonts to operate on.
+            rules_managers: Dict mapping font id to MetricsRulesManager.
+
+        Returns:
+            CommandResult with affected glyphs.
+        """
+        if rules_managers is None:
+            return CommandResult.error("Rules managers not provided")
+
+        all_affected: set[str] = set()
+
+        for font in context:
+            font_id = id(font)
+            manager = rules_managers.get(font_id)
+            if manager is None:
+                continue
+
+            # Determine source glyphs
+            if self.source_glyphs:
+                sources = self.source_glyphs
+            else:
+                # Get all glyphs that have dependents
+                sources = list(manager._dependents_cache.keys())
+
+            # Collect all affected glyphs in topological order
+            glyphs_to_sync: list[str] = []
+            seen: set[str] = set()
+
+            for source in sources:
+                cascade = manager.get_cascade_order(source)
+                for g in cascade:
+                    if g not in seen:
+                        seen.add(g)
+                        glyphs_to_sync.append(g)
+
+            if not glyphs_to_sync:
+                continue
+
+            # Save previous values for undo
+            self._previous_values[font_id] = {}
+            for glyph in glyphs_to_sync:
+                if glyph not in font:
+                    continue
+                g = font[glyph]
+                self._previous_values[font_id][glyph] = {
+                    'left': g.leftMargin,
+                    'right': g.rightMargin,
+                }
+
+            # Apply rules in order
+            for glyph in glyphs_to_sync:
+                if glyph not in font:
+                    continue
+
+                g = font[glyph]
+
+                # Check and apply left rule
+                left_value = manager.evaluate(glyph, 'left')
+                if left_value is not None and g.leftMargin != left_value:
+                    g.leftMargin = left_value
+                    all_affected.add(glyph)
+
+                # Check and apply right rule
+                right_value = manager.evaluate(glyph, 'right')
+                if right_value is not None and g.rightMargin != right_value:
+                    g.rightMargin = right_value
+                    all_affected.add(glyph)
+
+        self._affected_glyphs = list(all_affected)
+
+        if all_affected:
+            return CommandResult.ok(
+                f"Synced {len(all_affected)} glyphs",
+                affected_glyphs=self._affected_glyphs,
+            )
+        return CommandResult.ok("No changes needed")
+
+    def undo(
+        self,
+        context: FontContext,
+        rules_managers: dict[int, MetricsRulesManager] | None = None,
+    ) -> CommandResult:
+        """
+        Undo the sync, restoring previous margin values.
+
+        Args:
+            context: Font context containing fonts to operate on.
+            rules_managers: Dict mapping font id to MetricsRulesManager.
+
+        Returns:
+            CommandResult indicating success.
+        """
+        for font in context:
+            font_id = id(font)
+            previous = self._previous_values.get(font_id, {})
+
+            for glyph, values in previous.items():
+                if glyph not in font:
+                    continue
+                g = font[glyph]
+                if values['left'] is not None:
+                    g.leftMargin = values['left']
+                if values['right'] is not None:
+                    g.rightMargin = values['right']
+
+        return CommandResult.ok(
+            f"Restored {len(self._affected_glyphs)} glyphs",
+            affected_glyphs=self._affected_glyphs,
+        )

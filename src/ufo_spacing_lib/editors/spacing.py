@@ -54,7 +54,11 @@ from typing import Any
 
 from ..commands.base import Command, CommandResult
 from ..commands.margins import AdjustMarginCommand, SetMarginCommand
-from ..commands.rules import RemoveMetricsRuleCommand, SetMetricsRuleCommand
+from ..commands.rules import (
+    RemoveMetricsRuleCommand,
+    SetMetricsRuleCommand,
+    SyncRulesCommand,
+)
 from ..contexts import FontContext
 from ..rules_manager import MetricsRulesManager
 
@@ -359,7 +363,9 @@ class SpacingEditor:
 
     def _is_rules_command(self, command: Command) -> bool:
         """Check if command requires rules managers."""
-        return isinstance(command, (SetMetricsRuleCommand, RemoveMetricsRuleCommand))
+        return isinstance(
+            command, (SetMetricsRuleCommand, RemoveMetricsRuleCommand, SyncRulesCommand)
+        )
 
     def _is_margin_command(self, command: Command) -> bool:
         """Check if command is a margin command (may need rules manager)."""

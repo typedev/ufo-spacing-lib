@@ -106,33 +106,20 @@ class SetMarginCommand(Command):
     def _save_glyph_state(self, font: Any, glyph_name: str) -> dict:
         """Save the current state of a glyph for undo."""
         glyph = font[glyph_name]
-        state = {
+        return {
             'leftMargin': glyph.leftMargin,
             'rightMargin': glyph.rightMargin,
             'width': glyph.width,
         }
-        # Save component offsets if any
-        if hasattr(glyph, 'components') and glyph.components:
-            state['component_offsets'] = [
-                (c.baseGlyph, c.offset) for c in glyph.components
-            ]
-        return state
 
     def _restore_glyph_state(self, font: Any, glyph_name: str, state: dict):
         """Restore a glyph to a previous state."""
         glyph = font[glyph_name]
-
-        # Restore margins/width
+        # Restoring margins automatically moves contours/components
         if state['leftMargin'] is not None:
             glyph.leftMargin = state['leftMargin']
         if state['rightMargin'] is not None:
             glyph.rightMargin = state['rightMargin']
-
-        # Restore component offsets if saved
-        if 'component_offsets' in state and hasattr(glyph, 'components'):
-            for i, (base, offset) in enumerate(state['component_offsets']):
-                if i < len(glyph.components):
-                    glyph.components[i].offset = offset
 
     def execute(
         self,
@@ -463,30 +450,20 @@ class AdjustMarginCommand(Command):
     def _save_glyph_state(self, font: Any, glyph_name: str) -> dict:
         """Save the current state of a glyph for undo."""
         glyph = font[glyph_name]
-        state = {
+        return {
             'leftMargin': glyph.leftMargin,
             'rightMargin': glyph.rightMargin,
             'width': glyph.width,
         }
-        if hasattr(glyph, 'components') and glyph.components:
-            state['component_offsets'] = [
-                (c.baseGlyph, c.offset) for c in glyph.components
-            ]
-        return state
 
     def _restore_glyph_state(self, font: Any, glyph_name: str, state: dict):
         """Restore a glyph to a previous state."""
         glyph = font[glyph_name]
-
+        # Restoring margins automatically moves contours/components
         if state['leftMargin'] is not None:
             glyph.leftMargin = state['leftMargin']
         if state['rightMargin'] is not None:
             glyph.rightMargin = state['rightMargin']
-
-        if 'component_offsets' in state and hasattr(glyph, 'components'):
-            for i, (base, offset) in enumerate(state['component_offsets']):
-                if i < len(glyph.components):
-                    glyph.components[i].offset = offset
 
     def execute(
         self,

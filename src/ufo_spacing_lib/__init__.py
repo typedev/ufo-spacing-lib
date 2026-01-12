@@ -67,6 +67,7 @@ from .commands.margins import (
 from .commands.rules import (
     RemoveMetricsRuleCommand,
     SetMetricsRuleCommand,
+    SyncRulesCommand,
 )
 from .contexts import FontContext
 from .editors.kerning import KerningEditor
@@ -130,6 +131,7 @@ __all__ = [
     # Commands - Rules
     "SetMetricsRuleCommand",
     "RemoveMetricsRuleCommand",
+    "SyncRulesCommand",
     # Metrics Rules
     "MetricsRulesManager",
     "ValidationReport",
