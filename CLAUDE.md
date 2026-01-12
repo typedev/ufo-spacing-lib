@@ -83,14 +83,26 @@ The library uses the Command pattern for all font modifications:
 - Manages linked sidebearings with automatic cascade updates
 - Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
 - Supported syntax: `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=H|` (opposite side)
-- Validation via `manager.validate()` returns `ValidationReport` with cycles, errors, warnings
+- Validation via `manager.validate()` returns `ValidationReport` with unified `RuleIssue` list
 - Cascade order computed via topological sort for correct update order
 - Key methods: `set_rule()`, `get_rule()`, `remove_rule()`, `evaluate()`, `get_cascade_order()`
 
 **Rule Commands** (`commands/rules.py`): Undoable rule operations
 - `SetMetricsRuleCommand` - set or update a metrics rule
 - `RemoveMetricsRuleCommand` - remove a metrics rule
-- Both support undo/redo and multi-font contexts
+- `SyncRulesCommand` - batch synchronization of all rules (for deferred updates)
+- All support undo/redo and multi-font contexts
+
+**Rules Generator** (`rules_generator.py`): Generate rules from composite structure
+- `generate_rules_from_composites(font)` - analyzes composites and returns `RuleGenerationResult`
+- Component 0 (index 0) determines both left and right margins
+- Returns rules dict + issues list (warnings for edge cases like component extends beyond base)
+
+**Unified Issue Reporting** (`rules_core.py`): Common issue format for validation and generation
+- `RuleIssue` dataclass with `glyph`, `code`, `message`, `severity`, `details`
+- Issue codes: `E01`/`E02` (errors), `W01`-`W08` (warnings), `I01` (info)
+- Factory functions: `create_cycle_error()`, `create_missing_glyph_warning()`, etc.
+- Used by both `ValidationReport` and `RuleGenerationResult`
 
 ### Group Naming Conventions
 - Kerning groups: `public.kern1.*` (left side), `public.kern2.*` (right side)

@@ -184,36 +184,39 @@ class TestValidationReport:
         assert bool(report) is True
 
     def test_report_with_cycles(self):
+        from ufo_spacing_lib.rules_core import create_cycle_error
+
         report = ValidationReport(
             is_valid=False,
-            cycles=[CycleError(cycle=["A", "B", "A"])],
+            issues=[create_cycle_error(["A", "B", "A"])],
         )
         assert report.is_valid is False
         assert report.has_errors is True
         assert len(report.errors) == 1
-        assert "A -> B -> A" in report.errors[0]
+        assert "A -> B -> A" in str(report.errors[0])
         assert bool(report) is False
 
     def test_report_with_parse_errors(self):
+        from ufo_spacing_lib.rules_core import create_parse_error
+
         report = ValidationReport(
             is_valid=False,
-            parse_errors=[
-                ParseError(glyph="X", side="left", rule="=", error="Empty")
-            ],
+            issues=[create_parse_error("X", "left", "=", "Empty")],
         )
         assert report.has_errors is True
         assert len(report.errors) == 1
 
     def test_report_with_warnings(self):
+        from ufo_spacing_lib.rules_core import (
+            create_missing_glyph_warning,
+            create_self_reference_warning,
+        )
+
         report = ValidationReport(
             is_valid=True,
-            missing_glyphs=[
-                MissingGlyphWarning(
-                    glyph="Aacute", side="left", rule="=A", missing_glyph="A"
-                )
-            ],
-            self_references=[
-                SelfReferenceWarning(glyph="B", side="right", rule="=B")
+            issues=[
+                create_missing_glyph_warning("Aacute", "left", "=A", "A"),
+                create_self_reference_warning("B", "right", "=B"),
             ],
         )
         assert report.is_valid is True
@@ -221,19 +224,20 @@ class TestValidationReport:
         assert len(report.warnings) == 2
 
     def test_report_with_all_issues(self):
+        from ufo_spacing_lib.rules_core import (
+            create_cycle_error,
+            create_missing_glyph_warning,
+            create_parse_error,
+            create_self_reference_warning,
+        )
+
         report = ValidationReport(
             is_valid=False,
-            cycles=[CycleError(cycle=["A", "B", "A"])],
-            missing_glyphs=[
-                MissingGlyphWarning(
-                    glyph="X", side="left", rule="=Y", missing_glyph="Y"
-                )
-            ],
-            parse_errors=[
-                ParseError(glyph="Z", side="right", rule="==", error="Invalid")
-            ],
-            self_references=[
-                SelfReferenceWarning(glyph="W", side="left", rule="=W")
+            issues=[
+                create_cycle_error(["A", "B", "A"]),
+                create_missing_glyph_warning("X", "left", "=Y", "Y"),
+                create_parse_error("Z", "right", "==", "Invalid"),
+                create_self_reference_warning("W", "left", "=W"),
             ],
         )
         assert report.has_errors is True

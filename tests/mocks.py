@@ -74,18 +74,36 @@ class MockComponent:
     Attributes:
         baseGlyph: Name of the base glyph this component references.
         offset: (x, y) offset of the component.
+        transformation: 6-tuple transformation matrix (defcon-compatible).
     """
 
-    def __init__(self, base_glyph: str, offset: tuple[int, int] = (0, 0)):
+    def __init__(
+        self,
+        base_glyph: str,
+        transformation: tuple[float, float, float, float, float, float] = (
+            1, 0, 0, 1, 0, 0
+        ),
+    ):
         """
         Initialize a mock component.
 
         Args:
             base_glyph: Name of the base glyph.
-            offset: Initial (x, y) offset.
+            transformation: 6-tuple (xx, xy, yx, yy, dx, dy).
         """
         self.baseGlyph = base_glyph
-        self.offset = offset
+        self.transformation = transformation
+
+    @property
+    def offset(self) -> tuple[int, int]:
+        """Get offset from transformation matrix."""
+        return (int(self.transformation[4]), int(self.transformation[5]))
+
+    @offset.setter
+    def offset(self, value: tuple[int, int]):
+        """Set offset in transformation matrix."""
+        t = self.transformation
+        self.transformation = (t[0], t[1], t[2], t[3], value[0], value[1])
 
     def moveBy(self, delta: tuple[int, int]):
         """
@@ -94,9 +112,11 @@ class MockComponent:
         Args:
             delta: (dx, dy) to add to offset.
         """
-        self.offset = (
-            self.offset[0] + delta[0],
-            self.offset[1] + delta[1]
+        t = self.transformation
+        self.transformation = (
+            t[0], t[1], t[2], t[3],
+            t[4] + delta[0],
+            t[5] + delta[1],
         )
 
 
@@ -176,6 +196,50 @@ class MockGlyph:
     def changed(self):
         """Mark the glyph as changed."""
         self._changed = True
+
+    @property
+    def bounds(self) -> tuple[int, int, int, int] | None:
+        """
+        Get glyph bounding box.
+
+        For pure composites (no own contours), returns None.
+        For glyphs with contours, returns bounds based on margins.
+
+        Returns:
+            (xMin, yMin, xMax, yMax) or None for empty/composite glyphs.
+        """
+        # Pure composite - no own bounds (use component bounds)
+        if self.components and not getattr(self, '_has_contours_flag', False):
+            return None
+
+        if self._left_margin is None:
+            return None
+
+        # Simulate bounds based on margins and width
+        xMin = self._left_margin
+        xMax = self.width - (self._right_margin or 0)
+        return (xMin, 0, xMax, 700)
+
+    def set_has_contours(self, value: bool = True):
+        """Mark glyph as having its own contours (mixed composite)."""
+        self._has_contours_flag = value
+
+    def addComponent(
+        self,
+        base_glyph: str,
+        transformation: tuple[float, float, float, float, float, float] = (
+            1, 0, 0, 1, 0, 0
+        ),
+    ):
+        """
+        Add a component to this glyph.
+
+        Args:
+            base_glyph: Name of the base glyph.
+            transformation: 6-tuple transformation matrix.
+        """
+        component = MockComponent(base_glyph, transformation)
+        self.components.append(component)
 
 
 class MockLib(dict):
@@ -265,6 +329,15 @@ class MockFont:
     def keys(self) -> list[str]:
         """Get list of glyph names."""
         return self.glyphOrder.copy()
+
+    def __iter__(self):
+        """Iterate over glyphs in font."""
+        for name in self.glyphOrder:
+            yield self[name]
+
+    def __len__(self) -> int:
+        """Return number of glyphs."""
+        return len(self.glyphOrder)
 
     def add_glyph(
         self,

@@ -335,6 +335,118 @@ virtual.reset_groups()   # Reset only groups
 
 ---
 
+## Metrics Rules (Linked Sidebearings)
+
+GlyphsApp-like metrics keys system for linking sidebearings between glyphs.
+
+### Basic Usage
+
+```python
+from ufo_spacing_lib import MetricsRulesManager, SpacingEditor, FontContext
+
+# Create manager
+manager = MetricsRulesManager(font)
+
+# Set rules: Aacute.left = A.left, Aacute.right = A.right
+manager.set_rule("Aacute", "left", "=A")
+manager.set_rule("Aacute", "right", "=A")
+
+# Arithmetic operations
+manager.set_rule("B", "left", "=A+10")   # A.left + 10
+manager.set_rule("C", "right", "=A*0.5") # A.right * 0.5
+
+# Symmetry: right = left of same glyph
+manager.set_rule("H", "right", "=|")
+
+# Opposite side from another glyph
+manager.set_rule("B", "right", "=A|")    # B.right = A.left
+```
+
+### Validation
+
+```python
+from ufo_spacing_lib import E_CYCLE, W_MISSING_GLYPH
+
+report = manager.validate()
+
+if not report.is_valid:
+    for error in report.errors:
+        print(f"Error [{error.code}]: {error.message}")
+
+for warning in report.warnings:
+    print(f"Warning [{warning.code}]: {warning.message}")
+
+# Filter by specific code
+cycles = report.get_issues_by_code(E_CYCLE)
+missing = report.get_issues_by_code(W_MISSING_GLYPH)
+```
+
+### Cascade Updates
+
+```python
+# When A changes, all dependents update automatically
+editor = SpacingEditor()
+context = FontContext.from_single_font(font)
+
+# This updates A and all glyphs with rules referencing A
+cmd = SetMarginCommand(glyph_name="A", side="left", value=50)
+editor.execute(cmd, context)
+
+# Deferred sync: change without cascade, then sync all at once
+cmd1 = SetMarginCommand(glyph_name="A", side="left", value=50, apply_rules=False)
+cmd2 = SetMarginCommand(glyph_name="B", side="left", value=40, apply_rules=False)
+editor.execute(cmd1, context)
+editor.execute(cmd2, context)
+
+# Sync all rules
+from ufo_spacing_lib import SyncRulesCommand
+sync_cmd = SyncRulesCommand()
+editor.execute(sync_cmd, context)
+```
+
+### Generate Rules from Composites
+
+```python
+from ufo_spacing_lib import generate_rules_from_composites, I_SINGLE_COMPONENT
+
+# Analyze composite glyphs and generate rules
+result = generate_rules_from_composites(font)
+
+# Generated rules based on component 0 (base)
+for glyph, sides in result.rules.items():
+    print(f"{glyph}: left={sides['left']}, right={sides['right']}")
+    # e.g., "Aacute: left==A, right==A"
+
+# Check issues (warnings, info)
+for issue in result.issues:
+    print(f"[{issue.code}] {issue.glyph}: {issue.message}")
+
+# Filter by severity
+warnings = result.warnings  # Only warnings
+infos = result.infos        # Only info messages
+
+# Single component info
+single = result.get_issues_by_code(I_SINGLE_COMPONENT)
+```
+
+### Issue Codes
+
+| Code | Severity | Description |
+|------|----------|-------------|
+| `E01` | Error | Parse error in rule syntax |
+| `E02` | Error | Circular dependency detected |
+| `W01` | Warning | References missing glyph |
+| `W02` | Warning | Self-reference detected |
+| `W03` | Warning | Component wider than base |
+| `W04` | Warning | Component extends left of base |
+| `W05` | Warning | Component extends right of base |
+| `W06` | Warning | Base component has zero width |
+| `W07` | Warning | Mixed contours and components |
+| `W08` | Warning | Base component does not exist |
+| `I01` | Info | Single component composite |
+
+---
+
 ## API Reference
 
 ### Editors
@@ -383,8 +495,16 @@ virtual.reset_groups()   # Reset only groups
 
 | Command | Parameters | Description |
 |---------|------------|-------------|
-| `SetMarginCommand` | `glyph_name`, `side`, `value` | Set margin to absolute value |
-| `AdjustMarginCommand` | `glyph_name`, `side`, `delta`, `propagate_to_composites=True` | Adjust margin by delta |
+| `SetMarginCommand` | `glyph_name`, `side`, `value`, `apply_rules=True` | Set margin to absolute value |
+| `AdjustMarginCommand` | `glyph_name`, `side`, `delta`, `propagate_to_composites=True`, `apply_rules=True` | Adjust margin by delta |
+
+#### Rules Commands
+
+| Command | Parameters | Description |
+|---------|------------|-------------|
+| `SetMetricsRuleCommand` | `glyph_name`, `side`, `rule` | Set a metrics rule |
+| `RemoveMetricsRuleCommand` | `glyph_name`, `side` | Remove a metrics rule |
+| `SyncRulesCommand` | - | Synchronize all rules (batch update) |
 
 ### Contexts
 
@@ -414,6 +534,35 @@ virtual.reset_groups()   # Reset only groups
 - `remove_glyphs_from_group(group, glyphs, create_exceptions)` - Remove glyphs
 - `delete_group(group, keep_kerning)` - Delete a group
 - `rename_group(old_name, new_name)` - Rename a group
+
+### Metrics Rules
+
+| Class/Function | Description |
+|----------------|-------------|
+| `MetricsRulesManager` | Manages metrics rules for linked sidebearings |
+| `ValidationReport` | Result of validating rules |
+| `RuleIssue` | Unified issue (error/warning/info) |
+| `RuleGenerationResult` | Result of generating rules from composites |
+| `generate_rules_from_composites(font)` | Generate rules from composite structure |
+
+**MetricsRulesManager Methods:**
+- `set_rule(glyph, side, rule)` - Set a rule
+- `get_rule(glyph, side)` - Get rule string
+- `remove_rule(glyph, side)` - Remove a rule
+- `has_rule(glyph, side=None)` - Check if rule exists
+- `validate()` → `ValidationReport` - Validate all rules
+- `evaluate(glyph, side)` - Calculate value from rule
+- `get_cascade_order(glyph, side)` - Get update order for dependents
+- `get_dependents(glyph)` - Get glyphs depending on this glyph
+- `get_dependencies(glyph)` - Get glyphs this glyph depends on
+
+**ValidationReport Properties:**
+- `is_valid` - True if no critical errors
+- `issues` - All issues (errors, warnings, info)
+- `errors` - Critical errors only
+- `warnings` - Warnings only
+- `get_issues_by_code(code)` - Filter by issue code
+- `get_issues_for_glyph(glyph)` - Filter by glyph
 
 ### Virtual Font
 
@@ -451,12 +600,17 @@ ufo_spacing_lib/
 ├── contexts.py          # FontContext class
 ├── groups_core.py       # FontGroupsManager, KernPairInfo, resolve_kern_pair
 ├── virtual.py           # VirtualFont for preview/simulation
+├── rules_core.py        # RuleIssue, ValidationReport, issue codes
+├── rules_manager.py     # MetricsRulesManager for linked sidebearings
+├── rules_parser.py      # Rule syntax parser
+├── rules_generator.py   # Generate rules from composites
 ├── commands/
 │   ├── __init__.py
 │   ├── base.py          # Command ABC, CommandResult
 │   ├── kerning.py       # Kerning commands
 │   ├── groups.py        # Group commands (Add, Remove, Delete, Rename)
-│   └── margins.py       # Margins commands
+│   ├── margins.py       # Margins commands with rules cascade
+│   └── rules.py         # Rules commands (Set, Remove, Sync)
 └── editors/
     ├── __init__.py
     ├── spacing.py       # SpacingEditor (unified, recommended)
@@ -520,7 +674,7 @@ class Font:
 
 ## Testing
 
-The library includes 128 unit tests covering all components.
+The library includes 328 unit tests covering all components.
 
 ```bash
 # Run all tests
@@ -541,10 +695,14 @@ uv run pytest tests/test_groups_manager.py::TestResolvePair -v
 | Module | Tests | Coverage |
 |--------|-------|----------|
 | Kerning Commands | 25 | SetKerning, AdjustKerning, RemoveKerning, CreateException |
-| **Group Commands** | **26** | AddGlyphsToGroup, RemoveGlyphsFromGroup, DeleteGroup, RenameGroup |
+| Group Commands | 26 | AddGlyphsToGroup, RemoveGlyphsFromGroup, DeleteGroup, RenameGroup |
 | Editors | 20 | KerningEditor, MarginsEditor, SpacingEditor, undo/redo, callbacks |
 | Groups Manager | 30 | FontGroupsManager, add/remove/delete/rename groups |
 | VirtualFont | 27 | Creation, isolation, glyph access, diff tracking, apply/reset |
+| **Metrics Rules** | **63** | MetricsRulesManager, validation, cascade, parser |
+| **Rules Commands** | **20** | SetMetricsRule, RemoveMetricsRule |
+| **Rules Generator** | **19** | generate_rules_from_composites, warnings |
+| **SyncRulesCommand** | **9** | Batch synchronization |
 
 ---
 

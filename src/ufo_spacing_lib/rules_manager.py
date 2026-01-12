@@ -28,12 +28,13 @@ from .rules_constants import (
     SOURCE_SIDE_OPPOSITE,
 )
 from .rules_core import (
-    CycleError,
-    MissingGlyphWarning,
     ParsedRule,
-    ParseError,
-    SelfReferenceWarning,
+    RuleIssue,
     ValidationReport,
+    create_cycle_error,
+    create_missing_glyph_warning,
+    create_parse_error,
+    create_self_reference_warning,
 )
 from .rules_parser import RuleParseError, RuleParser
 
@@ -357,18 +358,19 @@ class MetricsRulesManager:
         Returns:
             ValidationReport with detailed results.
         """
-        cycles = self._detect_cycles()
-        missing: list[MissingGlyphWarning] = []
-        parse_errors: list[ParseError] = []
-        self_refs: list[SelfReferenceWarning] = []
+        issues: list[RuleIssue] = []
+
+        # Check for cycles
+        for cycle in self._detect_cycles():
+            issues.append(create_cycle_error(cycle))
 
         for glyph, sides in self._rules.items():
             for side, rule in sides.items():
                 # Check parse errors
                 is_valid, error = self._parser.validate_syntax(rule)
                 if not is_valid:
-                    parse_errors.append(
-                        ParseError(glyph, side, rule, error or "Unknown error")
+                    issues.append(
+                        create_parse_error(glyph, side, rule, error or "Unknown error")
                     )
                     continue
 
@@ -382,33 +384,28 @@ class MetricsRulesManager:
                     and not parsed.is_symmetry
                     and parsed.source_side != SOURCE_SIDE_OPPOSITE
                 ):
-                    self_refs.append(
-                        SelfReferenceWarning(glyph, side, rule)
-                    )
+                    issues.append(create_self_reference_warning(glyph, side, rule))
 
                 # Check missing glyph
                 if parsed.source_glyph and not self._glyph_exists(
                     parsed.source_glyph
                 ):
-                    missing.append(
-                        MissingGlyphWarning(
+                    issues.append(
+                        create_missing_glyph_warning(
                             glyph, side, rule, parsed.source_glyph
                         )
                     )
 
-        is_valid = len(cycles) == 0 and len(parse_errors) == 0
+        has_errors = any(i.is_error for i in issues)
 
         return ValidationReport(
-            is_valid=is_valid,
-            cycles=cycles,
-            missing_glyphs=missing,
-            parse_errors=parse_errors,
-            self_references=self_refs,
+            is_valid=not has_errors,
+            issues=issues,
         )
 
-    def _detect_cycles(self) -> list[CycleError]:
+    def _detect_cycles(self) -> list[list[str]]:
         """Detect circular dependencies using DFS."""
-        cycles = []
+        cycles: list[list[str]] = []
         visited: set[str] = set()
         rec_stack: set[str] = set()
         path: list[str] = []
@@ -428,7 +425,7 @@ class MetricsRulesManager:
                     # Found cycle
                     cycle_start = path.index(dep)
                     cycle = path[cycle_start:] + [dep]
-                    cycles.append(CycleError(cycle=cycle))
+                    cycles.append(cycle)
                     return True
 
             path.pop()

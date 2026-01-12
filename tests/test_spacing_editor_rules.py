@@ -323,4 +323,5 @@ class TestSpacingEditorValidation:
 
         report = manager.validate()
         assert not report.is_valid
-        assert len(report.cycles) >= 1
+        cycle_errors = report.get_issues_by_code("E02")
+        assert len(cycle_errors) >= 1

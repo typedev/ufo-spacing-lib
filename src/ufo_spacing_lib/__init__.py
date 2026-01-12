@@ -93,7 +93,27 @@ from .groups_core import (
 )
 
 # Metrics rules
-from .rules_core import ValidationReport
+from .rules_core import (
+    RuleIssue,
+    ValidationReport,
+    # Issue codes
+    E_CYCLE,
+    E_PARSE_ERROR,
+    I_SINGLE_COMPONENT,
+    W_COMPONENT_WIDER,
+    W_EXTENDS_LEFT,
+    W_EXTENDS_RIGHT,
+    W_MISSING_BASE,
+    W_MISSING_GLYPH,
+    W_MIXED_CONTOURS,
+    W_SELF_REFERENCE,
+    W_ZERO_WIDTH,
+)
+from .rules_generator import (
+    RuleGenerationResult,
+    RuleWarning,  # Backwards compatibility alias
+    generate_rules_from_composites,
+)
 from .rules_manager import MetricsRulesManager
 
 # Virtual font for preview/simulation
@@ -135,6 +155,23 @@ __all__ = [
     # Metrics Rules
     "MetricsRulesManager",
     "ValidationReport",
+    "RuleIssue",
+    # Issue Codes
+    "E_PARSE_ERROR",
+    "E_CYCLE",
+    "W_MISSING_GLYPH",
+    "W_SELF_REFERENCE",
+    "W_COMPONENT_WIDER",
+    "W_EXTENDS_LEFT",
+    "W_EXTENDS_RIGHT",
+    "W_ZERO_WIDTH",
+    "W_MIXED_CONTOURS",
+    "W_MISSING_BASE",
+    "I_SINGLE_COMPONENT",
+    # Rules Generator
+    "generate_rules_from_composites",
+    "RuleGenerationResult",
+    "RuleWarning",  # Backwards compatibility
     # Groups
     "FontGroupsManager",
     "KernPairInfo",

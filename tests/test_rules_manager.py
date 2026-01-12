@@ -186,7 +186,8 @@ class TestValidation:
 
         report = self.manager.validate()
         assert not report.is_valid
-        assert len(report.cycles) >= 1
+        cycle_errors = report.get_issues_by_code("E02")
+        assert len(cycle_errors) >= 1
 
     def test_detect_cycle_chain(self):
         self.manager.set_rule("A", "left", "=B")
@@ -195,7 +196,8 @@ class TestValidation:
 
         report = self.manager.validate()
         assert not report.is_valid
-        assert len(report.cycles) >= 1
+        cycle_errors = report.get_issues_by_code("E02")
+        assert len(cycle_errors) >= 1
 
     def test_detect_missing_glyph(self):
         self.manager.set_rule("A", "left", "=NonExistent")
@@ -203,8 +205,9 @@ class TestValidation:
         report = self.manager.validate()
         assert report.is_valid  # Missing glyph is warning, not error
         assert report.has_warnings
-        assert len(report.missing_glyphs) == 1
-        assert report.missing_glyphs[0].missing_glyph == "NonExistent"
+        missing_warnings = report.get_issues_by_code("W01")
+        assert len(missing_warnings) == 1
+        assert missing_warnings[0].details["missing"] == "NonExistent"
 
     def test_detect_self_reference(self):
         self.manager.set_rule("A", "left", "=A")
@@ -212,9 +215,11 @@ class TestValidation:
         report = self.manager.validate()
         # Self-reference creates a cycle, so it's an error
         assert not report.is_valid
-        assert len(report.cycles) >= 1
+        cycle_errors = report.get_issues_by_code("E02")
+        assert len(cycle_errors) >= 1
         # Also detected as self-reference warning
-        assert len(report.self_references) == 1
+        self_ref_warnings = report.get_issues_by_code("W02")
+        assert len(self_ref_warnings) == 1
 
     def test_symmetry_not_self_reference(self):
         """=| is symmetry, not self-reference."""
