@@ -224,6 +224,88 @@ class TestSymmetryRules:
         assert self.font["V"].leftMargin == 60  # Copied from H.right
 
 
+class TestRulePriorityOverPropagate:
+    """Test that rules take priority over composite propagation."""
+
+    def setup_method(self):
+        self.font = MockFont(["A", "Aacute", "H"])
+        self.font["A"].leftMargin = 50
+        self.font["A"].rightMargin = 50
+        self.font["Aacute"].leftMargin = 50
+        self.font["Aacute"].rightMargin = 100  # Different from A!
+        self.font["H"].leftMargin = 80
+        self.font["H"].rightMargin = 80
+
+        # Make Aacute a composite of A
+        self.font.setReverseComponentMapping({"A": ["Aacute"]})
+
+        self.editor = SpacingEditor(self.font)
+
+    def test_rule_to_different_glyph_prevents_propagate(self):
+        """Composite with rule pointing to different glyph should not get propagate."""
+        # Aacute (composite of A) has rule pointing to H, not A
+        self.editor.execute(SetMetricsRuleCommand("Aacute", "right", "=H"))
+
+        # Note: Setting a rule doesn't immediately apply it.
+        # Aacute.rightMargin is still 100 (original value).
+
+        # Adjust A.right - should NOT propagate to Aacute (rule takes priority)
+        # But Aacute is not in A's cascade (it depends on H), so cascade won't touch it either.
+        cmd = AdjustMarginCommand("A", "right", 20)
+        self.editor.execute(cmd)
+
+        # A changed
+        assert self.font["A"].rightMargin == 70
+
+        # Aacute should NOT have gotten +20 from propagate (rule blocks it)
+        # It should remain at its original value (100), not 120
+        assert self.font["Aacute"].rightMargin == 100  # NOT 120
+
+    def test_rule_to_same_glyph_handled_by_cascade(self):
+        """Composite with rule pointing to base glyph should use cascade, not propagate."""
+        # Aacute (composite of A) has rule =A+10
+        self.editor.execute(SetMetricsRuleCommand("Aacute", "right", "=A+10"))
+
+        # Note: Setting a rule doesn't immediately apply it.
+        # Aacute.rightMargin is still 100 (original value).
+        assert self.font["Aacute"].rightMargin == 100
+
+        # Adjust A.right - triggers cascade which applies the rule
+        cmd = AdjustMarginCommand("A", "right", 20)
+        self.editor.execute(cmd)
+
+        # A changed
+        assert self.font["A"].rightMargin == 70
+
+        # Aacute should be 70+10=80 from cascade (rule =A+10 applied)
+        # NOT 100+20=120 from propagate (which was skipped due to rule)
+        assert self.font["Aacute"].rightMargin == 80
+
+    def test_undo_with_rule_priority(self):
+        """Undo should correctly restore when rule prevented propagate."""
+        # Aacute has rule pointing to H
+        self.editor.execute(SetMetricsRuleCommand("Aacute", "right", "=H"))
+
+        # Original value (rule doesn't auto-apply)
+        original_aacute = self.font["Aacute"].rightMargin  # 100
+
+        # Adjust A - Aacute not in cascade (depends on H), not propagated (has rule)
+        cmd = AdjustMarginCommand("A", "right", 20)
+        self.editor.execute(cmd)
+
+        # Aacute unchanged
+        assert self.font["Aacute"].rightMargin == 100
+
+        # Undo
+        self.editor.undo()
+
+        # A restored
+        assert self.font["A"].rightMargin == 50
+
+        # Aacute should still be 100 (was never changed)
+        assert self.font["Aacute"].rightMargin == original_aacute
+
+
 class TestWarningsInCascade:
     """Test warning generation during cascade."""
 

@@ -342,6 +342,15 @@ class MockFont:
         """
         return self._reverse_component_map.copy()
 
+    def setReverseComponentMapping(self, mapping: dict[str, list[str]]) -> None:
+        """
+        Set reverse component mapping (for testing).
+
+        Args:
+            mapping: Dict mapping base glyph names to lists of composite names.
+        """
+        self._reverse_component_map = mapping.copy()
+
 
 def create_test_font() -> MockFont:
     """

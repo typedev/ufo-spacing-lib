@@ -180,23 +180,27 @@ class SetMarginCommand(Command):
                 delta = scaled_value
                 glyph.width = scaled_value
 
-            # Propagate to composites
+            # Get rules manager for this font (needed for both propagate and cascade)
+            rules_manager = None
+            if self.apply_rules and rules_managers is not None:
+                rules_manager = rules_managers.get(id(font))
+
+            # Propagate to composites (skip those with rules - cascade handles them)
             if self.propagate_to_composites and delta != 0:
                 modified = self._propagate_to_composites(
                     font, self.glyph_name, self.side, delta, font_state,
-                    recursive=self.recursive_propagate
+                    recursive=self.recursive_propagate,
+                    rules_manager=rules_manager,
                 )
                 affected.extend(modified)
 
             # Apply rules cascade
-            if self.apply_rules and rules_managers is not None:
-                rules_manager = rules_managers.get(id(font))
-                if rules_manager:
-                    cascade_warnings, cascade_affected = self._apply_rules_cascade(
-                        font, rules_manager, font_state
-                    )
-                    warnings.extend(cascade_warnings)
-                    affected.extend(cascade_affected)
+            if rules_manager:
+                cascade_warnings, cascade_affected = self._apply_rules_cascade(
+                    font, rules_manager, font_state
+                )
+                warnings.extend(cascade_warnings)
+                affected.extend(cascade_affected)
 
             self._previous_state[id(font)] = font_state
 
@@ -214,10 +218,14 @@ class SetMarginCommand(Command):
         delta: int,
         font_state: dict,
         recursive: bool = False,
-        _visited: set | None = None
+        rules_manager: "MetricsRulesManager | None" = None,
+        _visited: set | None = None,
     ) -> list[str]:
         """
         Propagate margin change to composite glyphs.
+
+        Composites that have metrics rules for the affected side are skipped,
+        as their margins will be updated by the rules cascade instead.
 
         Args:
             font: The font object.
@@ -226,6 +234,7 @@ class SetMarginCommand(Command):
             delta: The amount the margin changed.
             font_state: State dict to save composite states into.
             recursive: If True, continue to composites of composites.
+            rules_manager: Optional rules manager to check for rules.
             _visited: Internal set to prevent infinite loops.
 
         Returns:
@@ -249,6 +258,11 @@ class SetMarginCommand(Command):
 
         for comp_name in map_glyphs[glyph_name]:
             if comp_name not in font or comp_name in _visited:
+                continue
+
+            # Skip composites that have rules for this side
+            # Rules take priority - cascade will handle them
+            if rules_manager and rules_manager.has_rule(comp_name, side):
                 continue
 
             comp_glyph = font[comp_name]
@@ -286,7 +300,9 @@ class SetMarginCommand(Command):
             if recursive:
                 nested = self._propagate_to_composites(
                     font, comp_name, side, delta, font_state,
-                    recursive=True, _visited=_visited
+                    recursive=True,
+                    rules_manager=rules_manager,
+                    _visited=_visited,
                 )
                 modified.extend(nested)
 
@@ -519,23 +535,27 @@ class AdjustMarginCommand(Command):
                     self._previous_state[id(font)] = font_state
                     continue
 
-            # Propagate to composites
+            # Get rules manager for this font (needed for both propagate and cascade)
+            rules_manager = None
+            if self.apply_rules and rules_managers is not None:
+                rules_manager = rules_managers.get(id(font))
+
+            # Propagate to composites (skip those with rules - cascade handles them)
             if self.propagate_to_composites:
                 modified = self._propagate_to_composites(
                     font, self.glyph_name, self.side, scaled_delta, font_state,
-                    recursive=self.recursive_propagate
+                    recursive=self.recursive_propagate,
+                    rules_manager=rules_manager,
                 )
                 affected.extend(modified)
 
             # Apply rules cascade
-            if self.apply_rules and rules_managers is not None:
-                rules_manager = rules_managers.get(id(font))
-                if rules_manager:
-                    cascade_warnings, cascade_affected = self._apply_rules_cascade(
-                        font, rules_manager, font_state
-                    )
-                    warnings.extend(cascade_warnings)
-                    affected.extend(cascade_affected)
+            if rules_manager:
+                cascade_warnings, cascade_affected = self._apply_rules_cascade(
+                    font, rules_manager, font_state
+                )
+                warnings.extend(cascade_warnings)
+                affected.extend(cascade_affected)
 
             self._previous_state[id(font)] = font_state
 
@@ -553,9 +573,14 @@ class AdjustMarginCommand(Command):
         delta: int,
         font_state: dict,
         recursive: bool = False,
-        _visited: set[str] | None = None
+        rules_manager: "MetricsRulesManager | None" = None,
+        _visited: set[str] | None = None,
     ) -> list[str]:
-        """Propagate margin change to composite glyphs."""
+        """Propagate margin change to composite glyphs.
+
+        Composites that have metrics rules for the affected side are skipped,
+        as their margins will be updated by the rules cascade instead.
+        """
         modified = []
 
         if _visited is None:
@@ -574,6 +599,11 @@ class AdjustMarginCommand(Command):
 
         for comp_name in map_glyphs[glyph_name]:
             if comp_name not in font or comp_name in _visited:
+                continue
+
+            # Skip composites that have rules for this side
+            # Rules take priority - cascade will handle them
+            if rules_manager and rules_manager.has_rule(comp_name, side):
                 continue
 
             comp_glyph = font[comp_name]
@@ -610,7 +640,9 @@ class AdjustMarginCommand(Command):
             if recursive:
                 nested = self._propagate_to_composites(
                     font, comp_name, side, delta, font_state,
-                    recursive=True, _visited=_visited
+                    recursive=True,
+                    rules_manager=rules_manager,
+                    _visited=_visited,
                 )
                 modified.extend(nested)
 
