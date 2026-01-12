@@ -79,6 +79,19 @@ The library uses the Command pattern for all font modifications:
 - `RenameGroupCommand` - rename group, updating all kerning references
 - All commands store kerning state (pairs with values) for complete undo/redo
 
+**MetricsRulesManager** (`rules_manager.py`): GlyphsApp-like metrics keys system
+- Manages linked sidebearings with automatic cascade updates
+- Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
+- Supported syntax: `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=H|` (opposite side)
+- Validation via `manager.validate()` returns `ValidationReport` with cycles, errors, warnings
+- Cascade order computed via topological sort for correct update order
+- Key methods: `set_rule()`, `get_rule()`, `remove_rule()`, `evaluate()`, `get_cascade_order()`
+
+**Rule Commands** (`commands/rules.py`): Undoable rule operations
+- `SetMetricsRuleCommand` - set or update a metrics rule
+- `RemoveMetricsRuleCommand` - remove a metrics rule
+- Both support undo/redo and multi-font contexts
+
 ### Group Naming Conventions
 - Kerning groups: `public.kern1.*` (left side), `public.kern2.*` (right side)
 - Margins groups: `com.typedev.margins1.*`, `com.typedev.margins2.*`
@@ -87,8 +100,16 @@ The library uses the Command pattern for all font modifications:
 The library expects font objects with:
 - `font.kerning` - dict-like with `__getitem__`, `__setitem__`, `__delitem__`, `__contains__`, `get()`, `remove()`
 - `font.groups` - dict-like for group management
+- `font.lib` - dict-like for storing metrics rules and metadata
 - `font[glyph_name]` - access to glyph objects with `leftMargin`, `rightMargin`, `width` attributes
 - See `tests/mocks.py` for mock implementations
+
+### Metrics Rules Integration
+Margin commands (`SetMarginCommand`, `AdjustMarginCommand`) have `apply_rules=True` by default:
+- When margin changes, dependent glyphs are automatically updated via cascade
+- Full undo/redo support for both main change and cascade effects
+- Set `apply_rules=False` to skip cascade (e.g., for manual overrides)
+- SpacingEditor automatically provides rules managers to margin commands
 
 ## Key Design Decisions
 

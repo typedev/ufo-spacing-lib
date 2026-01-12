@@ -41,6 +41,8 @@ class CommandResult:
         message: Optional human-readable message describing the result.
         data: Optional additional data returned by the command.
             The type and content depends on the specific command.
+        warnings: Tuple of warning messages (e.g., from rule evaluation).
+        affected_glyphs: Tuple of glyph names affected by the command.
 
     Example:
         Checking result:
@@ -50,6 +52,12 @@ class CommandResult:
         ...     print(f"Done: {result.message}")
         ... else:
         ...     print(f"Failed: {result.message}")
+
+        Checking warnings:
+
+        >>> if result.warnings:
+        ...     for w in result.warnings:
+        ...         print(f"Warning: {w}")
 
         Accessing result data:
 
@@ -61,23 +69,53 @@ class CommandResult:
     success: bool
     message: str = ""
     data: Any | None = None
+    warnings: tuple[str, ...] = ()
+    affected_glyphs: tuple[str, ...] = ()
+
+    @property
+    def has_warnings(self) -> bool:
+        """Check if there are any warnings."""
+        return len(self.warnings) > 0
 
     @classmethod
-    def ok(cls, message: str = "", data: Any = None) -> CommandResult:
+    def ok(
+        cls,
+        message: str = "",
+        data: Any = None,
+        warnings: tuple[str, ...] | list[str] = (),
+        affected_glyphs: tuple[str, ...] | list[str] = (),
+    ) -> CommandResult:
         """
         Create a successful result.
 
         Args:
             message: Optional success message.
             data: Optional result data.
+            warnings: Optional tuple/list of warning messages.
+            affected_glyphs: Optional tuple/list of affected glyph names.
 
         Returns:
             CommandResult with success=True.
 
         Example:
             >>> return CommandResult.ok("Kerning set successfully")
+            >>> return CommandResult.ok(
+            ...     "Margin adjusted",
+            ...     warnings=["Rule for X: glyph not found"],
+            ...     affected_glyphs=["A", "Aacute"]
+            ... )
         """
-        return cls(success=True, message=message, data=data)
+        return cls(
+            success=True,
+            message=message,
+            data=data,
+            warnings=tuple(warnings) if isinstance(warnings, list) else warnings,
+            affected_glyphs=(
+                tuple(affected_glyphs)
+                if isinstance(affected_glyphs, list)
+                else affected_glyphs
+            ),
+        )
 
     @classmethod
     def error(cls, message: str, data: Any = None) -> CommandResult:

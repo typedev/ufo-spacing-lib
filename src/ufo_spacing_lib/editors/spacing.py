@@ -2,36 +2,38 @@
 Spacing Editor Module.
 
 This module provides the SpacingEditor class - a unified editor for managing
-kerning, margins, and groups operations with full undo/redo support.
+kerning, margins, groups, and metrics rules operations with full undo/redo support.
 
-The editor acts as a command executor and history manager. It doesn't
-know about specific font implementations or UI - it just executes
-commands and maintains history.
+The editor acts as a command executor and history manager. It encapsulates
+font context and rules managers, providing a simple API for host applications.
 
 Example:
-    Basic usage:
+    Basic usage with fonts:
 
-    >>> from ufo_spacing_lib import SpacingEditor, FontContext
-    >>> from ufo_spacing_lib import AdjustKerningCommand, AddGlyphsToGroupCommand
+    >>> from ufo_spacing_lib import SpacingEditor
+    >>> from ufo_spacing_lib import AdjustMarginCommand, SetMetricsRuleCommand
     >>>
-    >>> # Create editor
-    >>> editor = SpacingEditor()
+    >>> # Create editor with font
+    >>> editor = SpacingEditor(font)
     >>>
-    >>> # Execute kerning command
-    >>> ctx = FontContext.from_single_font(font)
-    >>> cmd = AdjustKerningCommand(pair=('A', 'V'), delta=-10)
-    >>> editor.execute(cmd, ctx)
+    >>> # Execute margin command
+    >>> cmd = AdjustMarginCommand("A", "left", delta=10)
+    >>> editor.execute(cmd)
     >>>
-    >>> # Execute group command
-    >>> cmd = AddGlyphsToGroupCommand(
-    ...     group_name='public.kern1.A',
-    ...     glyphs=['Aacute', 'Agrave'],
-    ...     groups_manager=manager
-    ... )
-    >>> editor.execute(cmd, ctx)
+    >>> # Execute rule command
+    >>> cmd = SetMetricsRuleCommand("Aacute", "both", "=A")
+    >>> editor.execute(cmd)
     >>>
-    >>> # Undo (works for both kerning and groups)
+    >>> # Undo
     >>> editor.undo()
+
+    Multi-font usage:
+
+    >>> editor = SpacingEditor(
+    ...     [light_font, bold_font],
+    ...     scales={light_font: 1.0, bold_font: 1.2}
+    ... )
+    >>> editor.execute(AdjustMarginCommand("A", "left", 10))
 
 Event Callbacks:
     The editor supports event callbacks for integration with UI:
@@ -48,9 +50,13 @@ Event Callbacks:
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from ..commands.base import Command, CommandResult
+from ..commands.margins import AdjustMarginCommand, SetMarginCommand
+from ..commands.rules import RemoveMetricsRuleCommand, SetMetricsRuleCommand
 from ..contexts import FontContext
+from ..rules_manager import MetricsRulesManager
 
 
 class SpacingEditor:
@@ -58,16 +64,13 @@ class SpacingEditor:
     Unified editor for spacing operations with undo/redo support.
 
     The SpacingEditor manages execution of all spacing-related commands
-    (kerning, margins, groups) and maintains a single history stack for
+    (kerning, margins, groups, rules) and maintains a single history stack for
     undo/redo operations. This ensures consistent undo behavior when
-    operations affect multiple aspects (e.g., group changes that also
-    modify kerning).
+    operations affect multiple aspects.
 
-    The editor follows the Command Pattern where all operations
-    are encapsulated as Command objects. This enables:
-    - Consistent undo/redo behavior across all operation types
-    - Operation logging and debugging
-    - Easy testing
+    The editor encapsulates FontContext and MetricsRulesManager instances,
+    providing a simple API for host applications. Each font in the editor
+    has its own rules manager with independent rules.
 
     Attributes:
         on_change: Optional callback called after successful execute().
@@ -80,32 +83,75 @@ class SpacingEditor:
     Example:
         Creating and using an editor:
 
-        >>> editor = SpacingEditor()
+        >>> editor = SpacingEditor(font)
         >>>
-        >>> # Execute a kerning command
-        >>> cmd = AdjustKerningCommand(pair=('A', 'V'), delta=-10)
-        >>> ctx = FontContext.from_single_font(font)
-        >>> result = editor.execute(cmd, ctx)
+        >>> # Execute commands - context is handled internally
+        >>> editor.execute(AdjustMarginCommand("A", "left", 10))
         >>>
-        >>> # Execute a group command (same editor, same history)
-        >>> cmd = AddGlyphsToGroupCommand(...)
-        >>> result = editor.execute(cmd, ctx)
+        >>> # Work with rules
+        >>> editor.execute(SetMetricsRuleCommand("Aacute", "left", "=A"))
         >>>
-        >>> # Undo works for both
-        >>> editor.undo()  # undoes group command
-        >>> editor.undo()  # undoes kerning command
+        >>> # Undo works for all command types
+        >>> editor.undo()
 
     Note:
         History is unlimited by default. For very long sessions,
         consider periodically calling clear_history() to free memory.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        fonts: Any | list[Any] | None = None,
+        *,
+        primary_font: Any | None = None,
+        scales: dict[Any, float] | None = None,
+    ):
         """
         Initialize the SpacingEditor.
 
-        Creates a new editor with empty history and no callbacks.
+        Args:
+            fonts: Font or list of fonts to operate on. If None, the editor
+                operates in legacy mode where context must be passed to execute().
+            primary_font: The primary font for lookups (for multi-font).
+                Defaults to first font.
+            scales: Optional dict of scale factors per font for interpolation.
+
+        Example:
+            Single font:
+            >>> editor = SpacingEditor(font)
+
+            Multiple fonts with scaling:
+            >>> editor = SpacingEditor(
+            ...     [light, bold],
+            ...     scales={light: 1.0, bold: 1.2}
+            ... )
         """
+        # Normalize fonts input
+        if fonts is None:
+            font_list = []
+        elif isinstance(fonts, list):
+            font_list = fonts
+        else:
+            font_list = [fonts]
+
+        # Create internal context (may be empty for legacy mode)
+        if font_list:
+            self._context = FontContext(
+                fonts=font_list,
+                primary_font=primary_font or font_list[0],
+                scales=scales or {},
+            )
+        else:
+            self._context = None
+
+        # Create rules manager for each font
+        self._rules_managers: dict[int, MetricsRulesManager] = {}
+        for font in font_list:
+            self._rules_managers[id(font)] = MetricsRulesManager(font)
+
+        # Active fonts (None = all fonts)
+        self._active_fonts: list[Any] | None = None
+
         # History stacks
         self._history: list[tuple[Command, FontContext]] = []
         self._redo_stack: list[tuple[Command, FontContext]] = []
@@ -115,35 +161,165 @@ class SpacingEditor:
         self.on_undo: Callable[[Command, CommandResult], None] | None = None
         self.on_redo: Callable[[Command, CommandResult], None] | None = None
 
-    def execute(self, command: Command, context: FontContext) -> CommandResult:
+    # =========================================================================
+    # Font Access Properties
+    # =========================================================================
+
+    @property
+    def font(self) -> Any | None:
+        """
+        Primary font (convenience for single-font case).
+
+        Returns:
+            Primary font or None if no fonts configured.
+        """
+        if self._context:
+            return self._context.primary_font
+        return None
+
+    @property
+    def fonts(self) -> list[Any]:
+        """
+        All fonts in the editor.
+
+        Returns:
+            List of all fonts.
+        """
+        if self._context:
+            return self._context.fonts
+        return []
+
+    @property
+    def active_fonts(self) -> list[Any]:
+        """
+        Fonts that commands will apply to.
+
+        Returns:
+            List of active fonts (all fonts if not explicitly set).
+        """
+        if self._active_fonts is not None:
+            return self._active_fonts
+        return self.fonts
+
+    def set_active_fonts(self, fonts: list[Any] | Any | None = None) -> None:
+        """
+        Set which fonts commands apply to.
+
+        Args:
+            fonts: List of fonts, single font, or None for all fonts.
+
+        Example:
+            >>> editor.set_active_fonts([bold_font])  # Only bold
+            >>> editor.set_active_fonts(None)  # All fonts
+        """
+        if fonts is None:
+            self._active_fonts = None
+        elif isinstance(fonts, list):
+            self._active_fonts = fonts
+        else:
+            self._active_fonts = [fonts]
+
+    # =========================================================================
+    # Rules Manager Access
+    # =========================================================================
+
+    def get_rules_manager(self, font: Any | None = None) -> MetricsRulesManager:
+        """
+        Get rules manager for a font.
+
+        Args:
+            font: Font to get manager for. If None, returns manager for
+                primary font.
+
+        Returns:
+            MetricsRulesManager for the font.
+
+        Raises:
+            KeyError: If font not found in editor.
+            ValueError: If no fonts configured.
+
+        Example:
+            >>> manager = editor.get_rules_manager()
+            >>> rules = manager.get_all_rules()
+        """
+        if font is None:
+            if self._context is None:
+                raise ValueError("No fonts configured in editor")
+            font = self._context.primary_font
+
+        font_id = id(font)
+        if font_id not in self._rules_managers:
+            raise KeyError("Font not found in editor")
+
+        return self._rules_managers[font_id]
+
+    # =========================================================================
+    # Command Execution
+    # =========================================================================
+
+    def execute(
+        self,
+        command: Command,
+        context: FontContext | None = None,
+        *,
+        font: Any | None = None,
+        fonts: list[Any] | None = None,
+    ) -> CommandResult:
         """
         Execute a command and add it to history.
 
-        Executes the given command with the provided context.
+        Executes the given command with the determined context.
         If successful, the command is added to the undo history
         and the redo stack is cleared.
 
         Args:
             command: The command to execute.
-            context: The font context to execute in.
+            context: Optional font context (for backward compatibility).
+                If provided, overrides font/fonts parameters.
+            font: Optional single font override.
+            fonts: Optional multiple fonts override.
+
+        If neither context, font, nor fonts is specified, uses active_fonts.
 
         Returns:
             CommandResult from the command execution.
 
         Example:
-            >>> cmd = AdjustKerningCommand(pair=('A', 'V'), delta=-10)
-            >>> result = editor.execute(cmd, context)
-            >>> if result.success:
-            ...     print("Kerning adjusted")
+            >>> # Using internal context (recommended)
+            >>> editor.execute(AdjustMarginCommand("A", "left", 10))
+            >>>
+            >>> # Override to specific font
+            >>> editor.execute(cmd, font=bold_font)
+            >>>
+            >>> # Legacy mode with explicit context
+            >>> editor.execute(cmd, context)
 
         Note:
             Failed commands are not added to history.
         """
-        result = command.execute(context)
+        # Determine execution context
+        if context is not None:
+            # Legacy mode: use provided context
+            exec_context = context
+        else:
+            # New mode: build context from editor state
+            exec_context = self._build_execution_context(font, fonts)
+
+        # Execute command with appropriate handling
+        if self._is_rules_command(command):
+            result = command.execute(exec_context, self._rules_managers)
+        elif self._is_margin_command(command):
+            # Pass rules managers for cascade if apply_rules is True
+            rules_managers = None
+            if getattr(command, 'apply_rules', False):
+                rules_managers = self._rules_managers
+            result = command.execute(exec_context, rules_managers)
+        else:
+            result = command.execute(exec_context)
 
         if result.success:
             # Add to history
-            self._history.append((command, context))
+            self._history.append((command, exec_context))
 
             # Clear redo stack (new action invalidates redo)
             self._redo_stack.clear()
@@ -153,6 +329,45 @@ class SpacingEditor:
                 self.on_change(command, result)
 
         return result
+
+    def _build_execution_context(
+        self,
+        font: Any | None,
+        fonts: list[Any] | None,
+    ) -> FontContext:
+        """Build FontContext for command execution."""
+        if self._context is None:
+            raise ValueError(
+                "No fonts configured. Either pass context to execute() "
+                "or initialize SpacingEditor with fonts."
+            )
+
+        # Determine target fonts
+        if font is not None:
+            target_fonts = [font]
+        elif fonts is not None:
+            target_fonts = fonts
+        else:
+            target_fonts = self.active_fonts
+
+        # Create execution context
+        return FontContext(
+            fonts=target_fonts,
+            primary_font=target_fonts[0] if target_fonts else None,
+            scales={f: self._context.get_scale(f) for f in target_fonts},
+        )
+
+    def _is_rules_command(self, command: Command) -> bool:
+        """Check if command requires rules managers."""
+        return isinstance(command, (SetMetricsRuleCommand, RemoveMetricsRuleCommand))
+
+    def _is_margin_command(self, command: Command) -> bool:
+        """Check if command is a margin command (may need rules manager)."""
+        return isinstance(command, (SetMarginCommand, AdjustMarginCommand))
+
+    # =========================================================================
+    # Undo / Redo
+    # =========================================================================
 
     def undo(self) -> CommandResult | None:
         """
@@ -176,8 +391,14 @@ class SpacingEditor:
         # Pop from history
         command, context = self._history.pop()
 
-        # Execute undo
-        result = command.undo(context)
+        # Execute undo with appropriate handling
+        if self._is_rules_command(command):
+            result = command.undo(context, self._rules_managers)
+        elif self._is_margin_command(command):
+            # Margin commands accept rules_manager for API consistency
+            result = command.undo(context)
+        else:
+            result = command.undo(context)
 
         # Push to redo stack
         self._redo_stack.append((command, context))
@@ -210,8 +431,17 @@ class SpacingEditor:
         # Pop from redo stack
         command, context = self._redo_stack.pop()
 
-        # Re-execute
-        result = command.execute(context)
+        # Re-execute with appropriate handling
+        if self._is_rules_command(command):
+            result = command.execute(context, self._rules_managers)
+        elif self._is_margin_command(command):
+            # Pass rules managers for cascade if apply_rules is True
+            rules_managers = None
+            if getattr(command, 'apply_rules', False):
+                rules_managers = self._rules_managers
+            result = command.execute(context, rules_managers)
+        else:
+            result = command.execute(context)
 
         # Push to history
         self._history.append((command, context))
@@ -221,6 +451,10 @@ class SpacingEditor:
             self.on_redo(command, result)
 
         return result
+
+    # =========================================================================
+    # History Properties
+    # =========================================================================
 
     @property
     def can_undo(self) -> bool:
@@ -298,7 +532,7 @@ class SpacingEditor:
         """
         return len(self._redo_stack)
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         """
         Clear all undo/redo history.
 
@@ -327,7 +561,9 @@ class SpacingEditor:
 
     def __repr__(self) -> str:
         """Return string representation of the editor."""
+        font_count = len(self.fonts)
         return (
-            f"SpacingEditor(history={len(self._history)}, "
+            f"SpacingEditor(fonts={font_count}, "
+            f"history={len(self._history)}, "
             f"redo={len(self._redo_stack)})"
         )

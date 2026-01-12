@@ -64,13 +64,14 @@ from .commands.margins import (
     AdjustMarginCommand,
     SetMarginCommand,
 )
+from .commands.rules import (
+    RemoveMetricsRuleCommand,
+    SetMetricsRuleCommand,
+)
 from .contexts import FontContext
 from .editors.kerning import KerningEditor
 from .editors.margins import MarginsEditor
 from .editors.spacing import SpacingEditor
-
-# Virtual font for preview/simulation
-from .virtual import VirtualFont, VirtualGroups, VirtualKerning
 
 # Groups management
 from .groups_core import (
@@ -89,6 +90,13 @@ from .groups_core import (
     researchPair,
     resolve_kern_pair,
 )
+
+# Metrics rules
+from .rules_core import ValidationReport
+from .rules_manager import MetricsRulesManager
+
+# Virtual font for preview/simulation
+from .virtual import VirtualFont, VirtualGroups, VirtualKerning
 
 __all__ = [
     # Version
@@ -119,6 +127,12 @@ __all__ = [
     # Commands - Margins
     "SetMarginCommand",
     "AdjustMarginCommand",
+    # Commands - Rules
+    "SetMetricsRuleCommand",
+    "RemoveMetricsRuleCommand",
+    # Metrics Rules
+    "MetricsRulesManager",
+    "ValidationReport",
     # Groups
     "FontGroupsManager",
     "KernPairInfo",

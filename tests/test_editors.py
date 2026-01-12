@@ -12,6 +12,7 @@ from ufo_spacing_lib.commands.margins import AdjustMarginCommand
 from ufo_spacing_lib.contexts import FontContext
 from ufo_spacing_lib.editors.kerning import KerningEditor
 from ufo_spacing_lib.editors.margins import MarginsEditor
+
 from .mocks import create_test_font
 
 

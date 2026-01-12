@@ -79,7 +79,7 @@ class AddGlyphsToGroupCommand(Command):
 
     group_name: str
     glyphs: list[str]
-    groups_manager: "FontGroupsManager"
+    groups_manager: FontGroupsManager
     check_kerning: bool = True
 
     # Undo state
@@ -229,7 +229,7 @@ class RemoveGlyphsFromGroupCommand(Command):
 
     group_name: str
     glyphs: list[str]
-    groups_manager: "FontGroupsManager"
+    groups_manager: FontGroupsManager
     check_kerning: bool = True
 
     # Undo state
@@ -341,7 +341,7 @@ class DeleteGroupCommand(Command):
     """
 
     group_name: str
-    groups_manager: "FontGroupsManager"
+    groups_manager: FontGroupsManager
     check_kerning: bool = True
 
     # Undo state
@@ -470,7 +470,7 @@ class RenameGroupCommand(Command):
 
     old_name: str
     new_name: str
-    groups_manager: "FontGroupsManager"
+    groups_manager: FontGroupsManager
     check_kerning: bool = True
 
     # Undo state

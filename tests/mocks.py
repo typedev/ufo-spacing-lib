@@ -178,6 +178,20 @@ class MockGlyph:
         self._changed = True
 
 
+class MockLib(dict):
+    """
+    Mock lib dictionary that behaves like RoboFont's font.lib.
+
+    Extends dict for UFO lib storage compatibility.
+
+    Example:
+        >>> lib = MockLib()
+        >>> lib['com.typedev.spacing.metricsRules'] = {'version': 1, 'rules': {}}
+    """
+
+    pass
+
+
 class MockFont:
     """
     Mock font object that simulates RoboFont font behavior.
@@ -188,6 +202,7 @@ class MockFont:
     Attributes:
         groups: MockGroups dictionary.
         kerning: MockKerning dictionary.
+        lib: MockLib dictionary for UFO lib storage.
         glyphOrder: List of glyph names in order.
 
     Example:
@@ -214,6 +229,7 @@ class MockFont:
         """
         self.groups = MockGroups()
         self.kerning = MockKerning()
+        self.lib = MockLib()
         self.glyphOrder = glyph_names or []
         self._glyphs: dict[str, MockGlyph] = {}
         self._reverse_component_map: dict[str, list[str]] = {}

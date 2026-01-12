@@ -20,7 +20,7 @@ from ufo_spacing_lib import (
 )
 from ufo_spacing_lib.groups_core import FontGroupsManager
 
-from .mocks import MockFont, create_test_font_with_kerning
+from .mocks import create_test_font_with_kerning
 
 
 class TestVirtualFontCreation(unittest.TestCase):

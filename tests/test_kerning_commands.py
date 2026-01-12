@@ -17,6 +17,7 @@ from ufo_spacing_lib.commands.kerning import (
     SetKerningCommand,
 )
 from ufo_spacing_lib.contexts import FontContext
+
 from .mocks import create_test_font
 
 

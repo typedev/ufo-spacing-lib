@@ -24,6 +24,7 @@ from ufo_spacing_lib.commands.groups import (
     RenameGroupCommand,
 )
 from ufo_spacing_lib.commands.kerning import AdjustKerningCommand
+
 from .mocks import create_test_font
 
 

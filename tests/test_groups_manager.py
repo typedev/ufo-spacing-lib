@@ -13,6 +13,7 @@ from ufo_spacing_lib.groups_core import (
     FontGroupsManager,
     resolve_kern_pair,
 )
+
 from .mocks import create_test_font
 
 
