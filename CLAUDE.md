@@ -79,7 +79,7 @@ The library uses the Command pattern for all font modifications:
 - `RenameGroupCommand` - rename group, updating all kerning references
 - All commands store kerning state (pairs with values) for complete undo/redo
 
-**MetricsRulesManager** (`rules_manager.py`): GlyphsApp-like metrics keys system
+**MetricsRulesManager** (`rules_manager.py`): Metrics keys system
 - Manages linked sidebearings with automatic cascade updates
 - Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
 - Supported syntax: `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=H|` (opposite side)

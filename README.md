@@ -337,7 +337,7 @@ virtual.reset_groups()   # Reset only groups
 
 ## Metrics Rules (Linked Sidebearings)
 
-GlyphsApp-like metrics keys system for linking sidebearings between glyphs.
+Metrics keys system for linking sidebearings between glyphs.
 
 ### Basic Usage
 

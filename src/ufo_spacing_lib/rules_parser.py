@@ -2,7 +2,7 @@
 Metrics Rules Parser.
 
 This module provides the RuleParser class for parsing metrics rule syntax
-similar to GlyphsApp metrics keys.
+for linked sidebearings (metrics keys).
 
 Supported syntax:
     =A          Simple reference (same side)
@@ -32,7 +32,7 @@ class RuleParser:
     """
     Parser for metrics rule syntax.
 
-    Parses rule strings into ParsedRule objects. Supports GlyphsApp-like
+    Parses rule strings into ParsedRule objects. Supports
     syntax with simple references, arithmetic operations, and symmetry.
 
     Example:

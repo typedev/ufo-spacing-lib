@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implementation of GlyphsApp-like metrics keys/rules system for managing linked sidebearings with automatic cascade updates and full undo/redo support.
+Implementation of metrics keys/rules system for managing linked sidebearings with automatic cascade updates and full undo/redo support.
 
 ## Key Decisions
 
