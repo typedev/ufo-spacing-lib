@@ -120,6 +120,66 @@ class MockComponent:
         )
 
 
+class MockContour:
+    """
+    Mock glyph contour.
+
+    Simulates a contour for testing moveBy operations.
+
+    Attributes:
+        points: List of (x, y) points.
+    """
+
+    def __init__(self, points: list[tuple[float, float]] | None = None):
+        """
+        Initialize mock contour.
+
+        Args:
+            points: List of (x, y) coordinate tuples.
+        """
+        self.points = points or []
+
+    def moveBy(self, delta: tuple[float, float]):
+        """
+        Move all points by delta.
+
+        Args:
+            delta: (dx, dy) movement.
+        """
+        dx, dy = delta
+        self.points = [(x + dx, y + dy) for x, y in self.points]
+
+
+class MockAnchor:
+    """
+    Mock glyph anchor.
+
+    Attributes:
+        x: X coordinate.
+        y: Y coordinate.
+        name: Anchor name.
+    """
+
+    def __init__(self, x: float, y: float, name: str = "top"):
+        self.x = x
+        self.y = y
+        self.name = name
+
+
+class MockGuideline:
+    """
+    Mock glyph guideline.
+
+    Attributes:
+        x: X coordinate (or None for horizontal).
+        y: Y coordinate (or None for vertical).
+    """
+
+    def __init__(self, x: float | None = None, y: float | None = None):
+        self.x = x
+        self.y = y
+
+
 class MockGlyph:
     """
     Mock glyph with margins, width, and components.
@@ -132,6 +192,9 @@ class MockGlyph:
         rightMargin: Right sidebearing (None for empty glyphs).
         width: Total advance width.
         components: List of MockComponent objects.
+        contours: List of MockContour objects.
+        anchors: List of MockAnchor objects.
+        guidelines: List of MockGuideline objects.
     """
 
     def __init__(
@@ -151,37 +214,90 @@ class MockGlyph:
             right_margin: Right sidebearing (None for empty).
         """
         self.name = name
-        self.width = width
+        self._width = width
         self._left_margin = left_margin
         self._right_margin = right_margin
         self.components: list[MockComponent] = []
+        self.contours: list[MockContour] = []
+        self.anchors: list[MockAnchor] = []
+        self.guidelines: list[MockGuideline] = []
         self._changed = False
+        self._font = None  # Reference to parent font
+        self._content_offset_x = 0  # Track horizontal shift of content
+        self._desired_right_margin = right_margin  # Track desired right margin
+        self._recalc_on_width = False  # Flag for recalc during initial setup
+        # Store initial content bounds (xMin, xMax) for accurate margin simulation
+        if left_margin is not None and right_margin is not None:
+            self._content_xmin = left_margin
+            self._content_xmax = width - right_margin
+        else:
+            self._content_xmin = None
+            self._content_xmax = None
+
+    @property
+    def width(self) -> int:
+        """Get glyph width."""
+        return self._width
+
+    @width.setter
+    def width(self, value: int):
+        """Set glyph width, updating content bounds if needed."""
+        self._width = value
+        # Recalculate content_xmax only during initial setup sequence
+        if self._recalc_on_width and self._content_xmin is not None:
+            if self._desired_right_margin is not None:
+                self._content_xmax = value - self._desired_right_margin - self._content_offset_x
+            self._recalc_on_width = False
 
     @property
     def leftMargin(self) -> int | None:
-        """Get left margin."""
-        return self._left_margin
+        """Get left margin (xMin of content)."""
+        if self._content_xmin is None:
+            return self._left_margin
+        return self._content_xmin + self._content_offset_x
 
     @leftMargin.setter
     def leftMargin(self, value: int | None):
-        """Set left margin, adjusting width accordingly."""
-        if self._left_margin is not None and value is not None:
-            delta = value - self._left_margin
-            self.width += delta
-        self._left_margin = value
+        """Set left margin by shifting content."""
+        if self._content_xmin is None:
+            self._left_margin = value
+            # Initialize content bounds if setting for first time
+            if value is not None and self._right_margin is not None:
+                self._content_xmin = value
+                self._content_xmax = self._width - self._right_margin
+            return
+        current = self._content_xmin + self._content_offset_x
+        if value is not None:
+            delta = value - current
+            self._content_offset_x += delta
+            self._width += delta
 
     @property
     def rightMargin(self) -> int | None:
-        """Get right margin."""
-        return self._right_margin
+        """Get right margin (width - xMax of content)."""
+        if self._content_xmax is None:
+            return self._right_margin
+        xMax = self._content_xmax + self._content_offset_x
+        return self.width - xMax
 
     @rightMargin.setter
     def rightMargin(self, value: int | None):
-        """Set right margin, adjusting width accordingly."""
-        if self._right_margin is not None and value is not None:
-            delta = value - self._right_margin
-            self.width += delta
-        self._right_margin = value
+        """Set right margin by adjusting width."""
+        self._desired_right_margin = value
+        self._recalc_on_width = True  # Trigger recalc on next width change
+        if self._content_xmax is None:
+            if self._right_margin is not None and value is not None:
+                delta = value - self._right_margin
+                self._width += delta
+            self._right_margin = value
+            # Initialize content bounds if setting for first time
+            if value is not None and self._left_margin is not None:
+                self._content_xmin = self._left_margin
+                self._content_xmax = self._width - value
+            return
+        xMax = self._content_xmax + self._content_offset_x
+        if value is not None:
+            self._width = xMax + value
 
     def moveBy(self, delta: tuple[int, int]):
         """
@@ -203,7 +319,7 @@ class MockGlyph:
         Get glyph bounding box.
 
         For pure composites (no own contours), returns None.
-        For glyphs with contours, returns bounds based on margins.
+        For glyphs with contours, returns bounds based on content box.
 
         Returns:
             (xMin, yMin, xMax, yMax) or None for empty/composite glyphs.
@@ -212,17 +328,59 @@ class MockGlyph:
         if self.components and not getattr(self, '_has_contours_flag', False):
             return None
 
-        if self._left_margin is None:
+        if self._content_xmin is None:
             return None
 
-        # Simulate bounds based on margins and width
-        xMin = self._left_margin
-        xMax = self.width - (self._right_margin or 0)
+        # Use stored content bounds with offset from moveBy operations
+        # This simulates real glyph behavior where bounds come from contours
+        xMin = self._content_xmin + self._content_offset_x
+        xMax = self._content_xmax + self._content_offset_x
         return (xMin, 0, xMax, 700)
 
     def set_has_contours(self, value: bool = True):
         """Mark glyph as having its own contours (mixed composite)."""
         self._has_contours_flag = value
+
+    def __iter__(self):
+        """Iterate over contours."""
+        # Return mock contours that update _content_offset_x when moved
+        return iter(self._get_mock_contours())
+
+    def _get_mock_contours(self):
+        """Get mock contours that track movement."""
+        glyph = self
+
+        class TrackingContour:
+            def moveBy(inner_self, delta):
+                glyph._content_offset_x += delta[0]
+
+        # Return at least one contour for iteration
+        if self._left_margin is not None:
+            return [TrackingContour()]
+        return []
+
+    def draw(self, pen):
+        """
+        Draw glyph outline to pen.
+
+        For testing italic margins, this draws a simple rectangle
+        based on bounds.
+
+        Args:
+            pen: A pen object (e.g., BoundsPen wrapped in TransformPen).
+        """
+        bounds = self.bounds
+        if bounds is None:
+            return
+
+        xMin, yMin, xMax, yMax = bounds
+
+        # Draw a simple rectangle
+        pen.moveTo((xMin, yMin))
+        pen.lineTo((xMin, yMax))
+        pen.lineTo((xMax, yMax))
+        pen.lineTo((xMax, yMin))
+        pen.closePath()
 
     def addComponent(
         self,
@@ -256,6 +414,28 @@ class MockLib(dict):
     pass
 
 
+class MockFontInfo:
+    """
+    Mock font info object.
+
+    Simulates font.info with italicAngle and other attributes.
+
+    Attributes:
+        italicAngle: Italic angle in degrees (negative for right-leaning).
+        unitsPerEm: Units per em (default 1000).
+    """
+
+    def __init__(self, italic_angle: float | None = None):
+        """
+        Initialize mock font info.
+
+        Args:
+            italic_angle: Italic angle in degrees (negative = right lean).
+        """
+        self.italicAngle = italic_angle
+        self.unitsPerEm = 1000
+
+
 class MockFont:
     """
     Mock font object that simulates RoboFont font behavior.
@@ -282,7 +462,8 @@ class MockFont:
     def __init__(
         self,
         glyph_names: list[str] | None = None,
-        create_glyphs: bool = True
+        create_glyphs: bool = True,
+        italic_angle: float | None = None,
     ):
         """
         Initialize a mock font.
@@ -290,17 +471,21 @@ class MockFont:
         Args:
             glyph_names: List of glyph names to include.
             create_glyphs: If True, create MockGlyph objects for each name.
+            italic_angle: Italic angle in degrees (negative = right lean).
         """
         self.groups = MockGroups()
         self.kerning = MockKerning()
         self.lib = MockLib()
+        self.info = MockFontInfo(italic_angle)
         self.glyphOrder = glyph_names or []
         self._glyphs: dict[str, MockGlyph] = {}
         self._reverse_component_map: dict[str, list[str]] = {}
 
         if create_glyphs and glyph_names:
             for name in glyph_names:
-                self._glyphs[name] = MockGlyph(name)
+                glyph = MockGlyph(name)
+                glyph._font = self
+                self._glyphs[name] = glyph
 
     def __contains__(self, glyph_name: str) -> bool:
         """Check if glyph exists in font."""
@@ -359,6 +544,7 @@ class MockFont:
             The created MockGlyph.
         """
         glyph = MockGlyph(name, width, left_margin, right_margin)
+        glyph._font = self
         self._glyphs[name] = glyph
         if name not in self.glyphOrder:
             self.glyphOrder.append(name)

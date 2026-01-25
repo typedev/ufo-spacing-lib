@@ -279,6 +279,176 @@ class TestSpacingEditorCallbacks:
         assert self.callback_calls[0][0] == "redo"
 
 
+class TestSpacingEditorAffectedGlyphsPreview:
+    """Test get_affected_glyphs_preview for external undo."""
+
+    def test_returns_main_glyph(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "B"])
+        editor = SpacingEditor(font)
+
+        cmd = AdjustMarginCommand("A", "left", 10)
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert "A" in affected
+
+    def test_returns_composites(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "Aacute"])
+        font.add_composite("Aacute", "A")
+
+        editor = SpacingEditor(font)
+
+        cmd = AdjustMarginCommand("A", "left", 10)
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert "A" in affected
+        assert "Aacute" in affected
+
+    def test_returns_cascade_glyphs(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "Aacute", "Agrave"])
+        editor = SpacingEditor(font)
+
+        # Set up rules: Aacute and Agrave depend on A
+        rm = editor.get_rules_manager()
+        rm.set_rule("Aacute", "left", "=A")
+        rm.set_rule("Agrave", "left", "=A")
+
+        cmd = AdjustMarginCommand("A", "left", 10)
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert "A" in affected
+        assert "Aacute" in affected
+        assert "Agrave" in affected
+
+    def test_excludes_composites_with_rules(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "Aacute"])
+        font.add_composite("Aacute", "A")
+
+        editor = SpacingEditor(font)
+
+        # Aacute has a rule - should be in cascade, not composites
+        rm = editor.get_rules_manager()
+        rm.set_rule("Aacute", "left", "=A+10")
+
+        cmd = AdjustMarginCommand("A", "left", 10)
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        # Aacute should still be affected (via cascade)
+        assert "A" in affected
+        assert "Aacute" in affected
+
+    def test_returns_empty_for_non_margin_command(self):
+        font = MockFont(["A", "Aacute"])
+        editor = SpacingEditor(font)
+
+        cmd = SetMetricsRuleCommand("Aacute", "left", "=A")
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert affected == set()
+
+    def test_returns_empty_for_missing_glyph(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A"])
+        editor = SpacingEditor(font)
+
+        cmd = AdjustMarginCommand("B", "left", 10)  # B not in font
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert affected == set()
+
+    def test_respects_propagate_false(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "Aacute"])
+        font.add_composite("Aacute", "A")
+
+        editor = SpacingEditor(font)
+
+        cmd = AdjustMarginCommand("A", "left", 10, propagate_to_composites=False)
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert "A" in affected
+        assert "Aacute" not in affected
+
+    def test_respects_apply_rules_false(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "Aacute"])
+        editor = SpacingEditor(font)
+
+        rm = editor.get_rules_manager()
+        rm.set_rule("Aacute", "left", "=A")
+
+        cmd = AdjustMarginCommand("A", "left", 10, apply_rules=False)
+        affected = editor.get_affected_glyphs_preview(cmd)
+
+        assert "A" in affected
+        assert "Aacute" not in affected
+
+
+class TestSpacingEditorExternalUndo:
+    """Test add_to_history=False for external undo management."""
+
+    def test_add_to_history_false_does_not_add_to_history(self):
+        font = MockFont(["A", "Aacute"])
+        editor = SpacingEditor(font)
+
+        cmd = SetMetricsRuleCommand("Aacute", "left", "=A")
+        result = editor.execute(cmd, add_to_history=False)
+
+        assert result.success
+        assert editor.history_count == 0
+        assert not editor.can_undo
+
+    def test_add_to_history_false_does_not_clear_redo(self):
+        font = MockFont(["A", "Aacute", "Agrave"])
+        editor = SpacingEditor(font)
+
+        # Execute and undo to populate redo stack
+        cmd1 = SetMetricsRuleCommand("Aacute", "left", "=A")
+        editor.execute(cmd1)
+        editor.undo()
+
+        assert editor.can_redo
+
+        # Execute with add_to_history=False
+        cmd2 = SetMetricsRuleCommand("Agrave", "left", "=A")
+        editor.execute(cmd2, add_to_history=False)
+
+        # Redo stack should still be intact
+        assert editor.can_redo
+
+    def test_add_to_history_false_still_calls_on_change(self):
+        font = MockFont(["A", "Aacute"])
+        editor = SpacingEditor(font)
+
+        callback_calls = []
+        editor.on_change = lambda cmd, result: callback_calls.append((cmd, result))
+
+        cmd = SetMetricsRuleCommand("Aacute", "left", "=A")
+        editor.execute(cmd, add_to_history=False)
+
+        assert len(callback_calls) == 1
+
+    def test_add_to_history_true_is_default(self):
+        font = MockFont(["A", "Aacute"])
+        editor = SpacingEditor(font)
+
+        cmd = SetMetricsRuleCommand("Aacute", "left", "=A")
+        editor.execute(cmd)
+
+        assert editor.history_count == 1
+        assert editor.can_undo
+
+
 class TestSpacingEditorLegacyMode:
     """Test backward compatibility with legacy API."""
 

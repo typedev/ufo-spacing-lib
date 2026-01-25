@@ -64,6 +64,16 @@ from .commands.margins import (
     AdjustMarginCommand,
     SetMarginCommand,
 )
+
+# Margins utilities
+from .margins_utils import (
+    get_angled_margins,
+    get_italic_angle,
+    get_slant_factor,
+    get_unskewed_bounds,
+    set_angled_left_margin,
+    set_angled_right_margin,
+)
 from .commands.rules import (
     RemoveMetricsRuleCommand,
     SetMetricsRuleCommand,
@@ -148,6 +158,13 @@ __all__ = [
     # Commands - Margins
     "SetMarginCommand",
     "AdjustMarginCommand",
+    # Margins Utilities
+    "get_italic_angle",
+    "get_slant_factor",
+    "get_unskewed_bounds",
+    "get_angled_margins",
+    "set_angled_left_margin",
+    "set_angled_right_margin",
     # Commands - Rules
     "SetMetricsRuleCommand",
     "RemoveMetricsRuleCommand",

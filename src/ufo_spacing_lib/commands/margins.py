@@ -40,6 +40,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..contexts import FontContext
+from ..margins_utils import (
+    get_slant_factor,
+    set_angled_left_margin,
+    set_angled_right_margin,
+)
 from .base import Command, CommandResult
 
 if TYPE_CHECKING:
@@ -63,6 +68,9 @@ class SetMarginCommand(Command):
         glyph_name: Name of the glyph to modify.
         side: Which margin to set - 'left' or 'right'.
         value: The margin value to set.
+        value_is_angled: If True, the value is interpreted as an angled
+            (visual) margin for italic fonts. The command will convert
+            it to physical margin internally. Default is False.
         propagate_to_composites: If True (default), also updates
             composite glyphs that use this glyph as a base component.
         recursive_propagate: If True, propagation continues recursively
@@ -71,21 +79,38 @@ class SetMarginCommand(Command):
             that depend on this glyph.
 
     Example:
+        >>> # Set physical margin (default)
         >>> cmd = SetMarginCommand(
         ...     glyph_name='A',
         ...     side='left',
         ...     value=50,
         ... )
         >>> editor.execute(cmd)
+        >>>
+        >>> # Set angled margin (for italic UI)
+        >>> cmd = SetMarginCommand(
+        ...     glyph_name='A',
+        ...     side='left',
+        ...     value=50,
+        ...     value_is_angled=True,
+        ... )
+        >>> editor.execute(cmd)
 
     Note:
         For glyphs without contours (like /space), modifying the
         margin affects the glyph width instead.
+
+        For italic fonts, when value_is_angled=True:
+        - Left margin: shifts contours/components/anchors to achieve
+          the desired visual margin
+        - Right margin: adjusts glyph width to achieve the desired
+          visual margin
     """
 
     glyph_name: str
     side: str  # 'left' or 'right'
     value: int
+    value_is_angled: bool = False
     propagate_to_composites: bool = True
     recursive_propagate: bool = False
     apply_rules: bool = True
@@ -156,7 +181,18 @@ class SetMarginCommand(Command):
 
             scaled_value = context.scale_value(font, self.value)
 
-            if current_margin is not None:
+            # Handle angled margin conversion for italic fonts
+            if self.value_is_angled and get_slant_factor(font) != 0:
+                # Set angled margin (handles conversion internally)
+                if self.side == SIDE_LEFT:
+                    old_left = glyph.leftMargin
+                    set_angled_left_margin(glyph, font, scaled_value)
+                    delta = (glyph.leftMargin or 0) - (old_left or 0)
+                else:
+                    old_right = glyph.rightMargin
+                    set_angled_right_margin(glyph, font, scaled_value)
+                    delta = (glyph.rightMargin or 0) - (old_right or 0)
+            elif current_margin is not None:
                 delta = scaled_value - current_margin
                 if self.side == SIDE_LEFT:
                     glyph.leftMargin = scaled_value

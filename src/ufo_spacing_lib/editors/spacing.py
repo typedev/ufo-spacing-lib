@@ -60,6 +60,7 @@ from ..commands.rules import (
     SyncRulesCommand,
 )
 from ..contexts import FontContext
+from ..margins_utils import get_angled_margins
 from ..rules_manager import MetricsRulesManager
 
 
@@ -258,6 +259,126 @@ class SpacingEditor:
         return self._rules_managers[font_id]
 
     # =========================================================================
+    # Margins Access
+    # =========================================================================
+
+    def get_margins(
+        self,
+        glyph_name: str,
+        angled: bool = False,
+        font: Any | None = None,
+    ) -> tuple[float | None, float | None]:
+        """
+        Get left and right margins for a glyph.
+
+        For italic fonts with angled=True, returns visual margins
+        calculated from unskewed bounds.
+
+        Args:
+            glyph_name: Name of the glyph.
+            angled: If True, return visual margins (unskewed for italic).
+                If False (default), return physical margins.
+            font: Specific font for multi-font contexts.
+                If None, uses primary font.
+
+        Returns:
+            Tuple of (left_margin, right_margin). Values may be None
+            for empty glyphs or if glyph doesn't exist.
+
+        Example:
+            >>> # Physical margins (default)
+            >>> left, right = editor.get_margins('A')
+            >>>
+            >>> # Angled margins (for italic UI display)
+            >>> left, right = editor.get_margins('A', angled=True)
+        """
+        target_font = font if font is not None else self.font
+        if target_font is None:
+            return None, None
+
+        if glyph_name not in target_font:
+            return None, None
+
+        glyph = target_font[glyph_name]
+
+        if angled:
+            return get_angled_margins(glyph, target_font)
+
+        return glyph.leftMargin, glyph.rightMargin
+
+    def get_affected_glyphs_preview(
+        self,
+        command: Command,
+        font: Any | None = None,
+    ) -> set[str]:
+        """
+        Preview which glyphs will be affected by a margin command.
+
+        Call BEFORE execute() to know what to snapshot for external undo.
+        This method mirrors the internal logic of margin commands for
+        determining affected glyphs.
+
+        Args:
+            command: SetMarginCommand or AdjustMarginCommand to preview.
+            font: Specific font for multi-font contexts.
+                If None, uses primary font.
+
+        Returns:
+            Set of glyph names that will be modified by the command.
+            Returns empty set for non-margin commands.
+
+        Example:
+            >>> cmd = AdjustMarginCommand('A', 'left', 10)
+            >>> affected = editor.get_affected_glyphs_preview(cmd)
+            >>> # Snapshot before states
+            >>> before = {g: snapshot(font[g]) for g in affected}
+            >>> result = editor.execute(cmd, add_to_history=False)
+            >>> # Store in external undo stack
+            >>> external_stack.push(UndoEntry(before, cmd))
+        """
+        # Only works for margin commands
+        if not self._is_margin_command(command):
+            return set()
+
+        target_font = font if font is not None else self.font
+        if target_font is None:
+            return set()
+
+        glyph_name = command.glyph_name
+        if glyph_name not in target_font:
+            return set()
+
+        side = command.side
+        propagate = getattr(command, 'propagate_to_composites', True)
+        apply_rules = getattr(command, 'apply_rules', True)
+
+        affected: set[str] = {glyph_name}
+
+        # Get rules manager for this font
+        rules_manager = None
+        if apply_rules:
+            rules_manager = self._rules_managers.get(id(target_font))
+
+        # Add composites (skip those with rules - cascade handles them)
+        if propagate and hasattr(target_font, 'getReverseComponentMapping'):
+            reverse_map = target_font.getReverseComponentMapping()
+            if glyph_name in reverse_map:
+                for comp_name in reverse_map[glyph_name]:
+                    if comp_name not in target_font:
+                        continue
+                    # Skip composites that have rules for this side
+                    if rules_manager and rules_manager.has_rule(comp_name, side):
+                        continue
+                    affected.add(comp_name)
+
+        # Add glyphs affected by rules cascade
+        if rules_manager:
+            cascade_glyphs = rules_manager.get_affected_glyphs(glyph_name, side)
+            affected.update(cascade_glyphs)
+
+        return affected
+
+    # =========================================================================
     # Command Execution
     # =========================================================================
 
@@ -268,13 +389,14 @@ class SpacingEditor:
         *,
         font: Any | None = None,
         fonts: list[Any] | None = None,
+        add_to_history: bool = True,
     ) -> CommandResult:
         """
-        Execute a command and add it to history.
+        Execute a command and optionally add it to history.
 
         Executes the given command with the determined context.
-        If successful, the command is added to the undo history
-        and the redo stack is cleared.
+        If successful and add_to_history is True, the command is added
+        to the undo history and the redo stack is cleared.
 
         Args:
             command: The command to execute.
@@ -282,6 +404,8 @@ class SpacingEditor:
                 If provided, overrides font/fonts parameters.
             font: Optional single font override.
             fonts: Optional multiple fonts override.
+            add_to_history: If True (default), add successful commands to
+                undo history. Set to False when using external undo management.
 
         If neither context, font, nor fonts is specified, uses active_fonts.
 
@@ -295,8 +419,9 @@ class SpacingEditor:
             >>> # Override to specific font
             >>> editor.execute(cmd, font=bold_font)
             >>>
-            >>> # Legacy mode with explicit context
-            >>> editor.execute(cmd, context)
+            >>> # External undo management
+            >>> result = editor.execute(cmd, add_to_history=False)
+            >>> external_undo_stack.push(cmd)
 
         Note:
             Failed commands are not added to history.
@@ -322,13 +447,14 @@ class SpacingEditor:
             result = command.execute(exec_context)
 
         if result.success:
-            # Add to history
-            self._history.append((command, exec_context))
+            if add_to_history:
+                # Add to history
+                self._history.append((command, exec_context))
 
-            # Clear redo stack (new action invalidates redo)
-            self._redo_stack.clear()
+                # Clear redo stack (new action invalidates redo)
+                self._redo_stack.clear()
 
-            # Notify listeners
+            # Notify listeners (always, regardless of add_to_history)
             if self.on_change:
                 self.on_change(command, result)
 
