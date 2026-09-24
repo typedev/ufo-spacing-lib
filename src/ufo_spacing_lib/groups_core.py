@@ -663,7 +663,9 @@ class FontGroupsManager:
     def check_pair_language_compatibility(self, pair: tuple[str, str]) -> bool:
         """Check if a pair is language-compatible."""
         if self.lang_set:
-            return self.lang_set.checkPairLanguageCompatibility(self.font, pair)
+            return bool(
+                self.lang_set.checkPairLanguageCompatibility(self.font, pair)
+            )
         return True
 
     checkPairLanguageCompatibility = check_pair_language_compatibility  # Alias
@@ -688,12 +690,16 @@ class FontGroupsManager:
         )
 
         if level == 2:
-            return self.lang_set.checkPairLanguageCompatibility(
-                self.font, (check_left, check_right)
+            return bool(
+                self.lang_set.checkPairLanguageCompatibility(
+                    self.font, (check_left, check_right)
+                )
             )
         else:
-            return self.lang_set.checkPairBaseScriptCompatibility(
-                self.font, (check_left, check_right)
+            return bool(
+                self.lang_set.checkPairBaseScriptCompatibility(
+                    self.font, (check_left, check_right)
+                )
             )
 
     checkPairLanguageCompatibilityGroupped = check_pair_compatibility_grouped  # Alias
@@ -793,8 +799,8 @@ class FontGroupsManager:
         is_new_group = False
         new_content = []
         skipped = []
-        new_pairs = []
-        deleted_pairs = []
+        new_pairs: list[tuple] = []
+        deleted_pairs: list[tuple] = []
 
         # Create group if it doesn't exist
         if group_name not in self.font.groups:
@@ -931,8 +937,8 @@ class FontGroupsManager:
         Returns:
             Tuple of (new_pairs, deleted_pairs)
         """
-        new_pairs = []
-        deleted_pairs = []
+        new_pairs: list[tuple] = []
+        deleted_pairs: list[tuple] = []
 
         if not glyph_list:
             return (new_pairs, deleted_pairs)
@@ -1012,8 +1018,8 @@ class FontGroupsManager:
         Returns:
             Tuple of (new_pairs, deleted_pairs)
         """
-        new_pairs = []
-        deleted_pairs = []
+        new_pairs: list[tuple] = []
+        deleted_pairs: list[tuple] = []
 
         if group_name not in self.font.groups:
             self._log("group_not_found", group_name)
@@ -1080,8 +1086,8 @@ class FontGroupsManager:
         Returns:
             Tuple of (new_pairs, deleted_pairs)
         """
-        new_pairs = []
-        deleted_pairs = []
+        new_pairs: list[tuple] = []
+        deleted_pairs: list[tuple] = []
 
         if old_name not in self.font.groups:
             self._log("group_not_found", old_name)

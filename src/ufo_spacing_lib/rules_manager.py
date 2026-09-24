@@ -512,10 +512,8 @@ class MetricsRulesManager:
 
         try:
             g = self._font[glyph]
-            if side == "left":
-                return g.leftMargin
-            else:
-                return g.rightMargin
+            margin: int | None = g.leftMargin if side == "left" else g.rightMargin
+            return margin
         except (AttributeError, KeyError):
             return None
 

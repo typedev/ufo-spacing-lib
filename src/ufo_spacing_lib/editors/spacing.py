@@ -50,7 +50,7 @@ Event Callbacks:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeGuard
 
 from ..commands.base import Command, CommandResult
 from ..commands.margins import AdjustMarginCommand, SetMarginCommand
@@ -140,6 +140,7 @@ class SpacingEditor:
             font_list = [fonts]
 
         # Create internal context (may be empty for legacy mode)
+        self._context: FontContext | None
         if font_list:
             self._context = FontContext(
                 fonts=font_list,
@@ -487,13 +488,19 @@ class SpacingEditor:
             scales={f: self._context.get_scale(f) for f in target_fonts},
         )
 
-    def _is_rules_command(self, command: Command) -> bool:
+    def _is_rules_command(
+        self, command: Command
+    ) -> TypeGuard[
+        SetMetricsRuleCommand | RemoveMetricsRuleCommand | SyncRulesCommand
+    ]:
         """Check if command requires rules managers."""
         return isinstance(
             command, (SetMetricsRuleCommand, RemoveMetricsRuleCommand, SyncRulesCommand)
         )
 
-    def _is_margin_command(self, command: Command) -> bool:
+    def _is_margin_command(
+        self, command: Command
+    ) -> TypeGuard[SetMarginCommand | AdjustMarginCommand]:
         """Check if command is a margin command (may need rules manager)."""
         return isinstance(command, (SetMarginCommand, AdjustMarginCommand))
 

@@ -147,7 +147,7 @@ class VirtualFont:
         """Get list of glyph names from source font."""
         if self.source is None:
             return []
-        return self.source.keys()
+        return list(self.source.keys())
 
     @property
     def glyphOrder(self) -> list[str]:
@@ -161,7 +161,8 @@ class VirtualFont:
         if self.source is None:
             return {}
         if hasattr(self.source, 'getReverseComponentMapping'):
-            return self.source.getReverseComponentMapping()
+            mapping: dict[str, list[str]] = self.source.getReverseComponentMapping()
+            return mapping
         return {}
 
     @classmethod

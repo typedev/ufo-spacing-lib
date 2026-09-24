@@ -168,7 +168,9 @@ class SetMarginCommand(Command):
             if self.glyph_name not in font:
                 continue
 
-            font_state = {'main': {}, 'composites': {}, 'cascade': {}}
+            font_state: dict[str, dict[str, Any]] = {
+                'main': {}, 'composites': {}, 'cascade': {}
+            }
             glyph = font[self.glyph_name]
 
             # Save main glyph state
@@ -263,7 +265,7 @@ class SetMarginCommand(Command):
         Returns:
             List of composite glyph names that were modified.
         """
-        modified = []
+        modified: list[str] = []
 
         if _visited is None:
             _visited = set()
@@ -523,7 +525,9 @@ class AdjustMarginCommand(Command):
             if self.glyph_name not in font:
                 continue
 
-            font_state = {'main': {}, 'composites': {}, 'cascade': {}}
+            font_state: dict[str, dict[str, Any]] = {
+                'main': {}, 'composites': {}, 'cascade': {}
+            }
             glyph = font[self.glyph_name]
 
             # Save state
@@ -594,7 +598,7 @@ class AdjustMarginCommand(Command):
         Composites that have metrics rules for the affected side are skipped,
         as their margins will be updated by the rules cascade instead.
         """
-        modified = []
+        modified: list[str] = []
 
         if _visited is None:
             _visited = set()

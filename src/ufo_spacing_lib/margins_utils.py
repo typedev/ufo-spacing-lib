@@ -108,7 +108,8 @@ def get_unskewed_bounds(
         transform_pen = TransformPen(bounds_pen, unskew)
         glyph.draw(transform_pen)
 
-        return bounds_pen.bounds
+        unskewed: tuple[float, float, float, float] | None = bounds_pen.bounds
+        return unskewed
 
     except Exception:
         return None

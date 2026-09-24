@@ -17,6 +17,9 @@ jobs:
       - name: Ruff
         run: uv run --locked --extra dev ruff check src/ tests/
 
+      - name: Mypy
+        run: uv run --locked --extra dev mypy src/
+
   test:
     runs-on: ubuntu-latest
     strategy:

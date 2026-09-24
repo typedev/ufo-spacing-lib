@@ -172,11 +172,8 @@ def _has_own_contours(font: Any, glyph: Any) -> bool:
 
     # Check if glyph bounds differ significantly from component bounds
     tolerance = 2
-    return (
-        abs(glyph_bounds[0] - comp_bounds[0]) > tolerance
-        or abs(glyph_bounds[1] - comp_bounds[1]) > tolerance
-        or abs(glyph_bounds[2] - comp_bounds[2]) > tolerance
-        or abs(glyph_bounds[3] - comp_bounds[3]) > tolerance
+    return any(
+        abs(glyph_bounds[i] - comp_bounds[i]) > tolerance for i in range(4)
     )
 
 
