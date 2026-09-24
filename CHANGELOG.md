@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-09-24
+
+### Fixed
+- `resolve_kern_pair()` now checks glyph+group before group+glyph, matching the
+  UFO kerning spec and `fontTools.ufoLib.kerning.lookupKerningValue`. Previously a
+  pair covered by both kinds of exception resolved to the wrong key and value.
+
+### Changed
+- Added `fonttools` to the `dev` extra so the italic margins tests run.
+- Releases are published to PyPI from GitHub Actions via trusted publishing.
+
 ## [0.4.0] - 2026-01-12
 
 ### Added

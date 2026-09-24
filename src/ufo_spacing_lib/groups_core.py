@@ -1272,20 +1272,9 @@ def resolve_kern_pair(
             right_group=right_group,
         )
 
-    # Case 2: Group-glyph pair exists
-    if (left_group, right_name) in kerning and kerning[
-        (left_group, right_name)
-    ] is not None:
-        return KernPairInfo(
-            left=left_group,
-            right=right_name,
-            value=kerning[(left_group, right_name)],
-            is_exception=right_in_group,
-            left_group=left_group,
-            right_group=right_group,
-        )
-
-    # Case 3: Glyph-group pair exists
+    # Case 2: Glyph-group pair exists (left-side exception).
+    # Checked before group-glyph, per the UFO kerning spec and
+    # fontTools.ufoLib.kerning.lookupKerningValue.
     if (left_name, right_group) in kerning and kerning[
         (left_name, right_group)
     ] is not None:
@@ -1294,6 +1283,19 @@ def resolve_kern_pair(
             right=right_group,
             value=kerning[(left_name, right_group)],
             is_exception=left_in_group,
+            left_group=left_group,
+            right_group=right_group,
+        )
+
+    # Case 3: Group-glyph pair exists (right-side exception)
+    if (left_group, right_name) in kerning and kerning[
+        (left_group, right_name)
+    ] is not None:
+        return KernPairInfo(
+            left=left_group,
+            right=right_name,
+            value=kerning[(left_group, right_name)],
+            is_exception=right_in_group,
             left_group=left_group,
             right_group=right_group,
         )

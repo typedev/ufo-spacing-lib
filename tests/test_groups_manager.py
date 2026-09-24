@@ -372,6 +372,63 @@ class TestResolvePair(unittest.TestCase):
         self.assertIn(info.exception_side, [ExceptionSide.LEFT, ExceptionSide.BOTH])
 
 
+class TestResolvePairLookupOrder(unittest.TestCase):
+    """resolve_kern_pair follows the UFO spec lookup order.
+
+    Order (as in fontTools.ufoLib.kerning.lookupKerningValue):
+    glyph+glyph, glyph+group, group+glyph, group+group.
+    """
+
+    L_GROUP = 'public.kern1.D'
+    R_GROUP = 'public.kern2.V'
+
+    def setUp(self):
+        self.font = create_test_font()
+        self.font.groups[self.L_GROUP] = ('D', 'Dcroat')
+        self.font.groups[self.R_GROUP] = ('V', 'W')
+
+    def _resolve(self):
+        manager = FontGroupsManager(self.font)
+        return resolve_kern_pair(self.font, manager, ('Dcroat', 'V'))
+
+    def test_glyph_group_wins_over_group_glyph(self):
+        """Left-side exception (glyph+group) beats group+glyph."""
+        self.font.kerning[(self.L_GROUP, self.R_GROUP)] = -10
+        self.font.kerning[('Dcroat', self.R_GROUP)] = -11
+        self.font.kerning[(self.L_GROUP, 'V')] = -12
+
+        info = self._resolve()
+
+        self.assertEqual((info.left, info.right), ('Dcroat', self.R_GROUP))
+        self.assertEqual(info.value, -11)
+        self.assertTrue(info.is_exception)
+        self.assertEqual(info.exception_side, ExceptionSide.LEFT)
+
+    def test_all_overlap_combinations(self):
+        """Every combination of keys resolves to the first key in spec order."""
+        spec_order = [
+            (('Dcroat', 'V'), -1),
+            (('Dcroat', self.R_GROUP), -2),
+            ((self.L_GROUP, 'V'), -3),
+            ((self.L_GROUP, self.R_GROUP), -4),
+        ]
+        for mask in range(1 << len(spec_order)):
+            present = [kv for i, kv in enumerate(spec_order) if mask & (1 << i)]
+            with self.subTest(keys=[k for k, _ in present]):
+                self.font.kerning.clear()
+                for key, value in present:
+                    self.font.kerning[key] = value
+
+                info = self._resolve()
+
+                if present:
+                    expected_key, expected_value = present[0]
+                    self.assertEqual((info.left, info.right), expected_key)
+                    self.assertEqual(info.value, expected_value)
+                else:
+                    self.assertIsNone(info.value)
+
+
 class TestLogging(unittest.TestCase):
     """Tests for operation logging."""
 
