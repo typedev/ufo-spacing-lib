@@ -42,7 +42,7 @@ Author:
     Alexander Lubovenko (typedev)
 """
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 __author__ = "Alexander Lubovenko"
 
 # Core components
