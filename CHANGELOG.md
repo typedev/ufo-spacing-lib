@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-09-24
+
+### Fixed
+- `VirtualFont.keys()` now returns a `list` as declared, instead of the source
+  font's keys view or tuple.
+- Type annotations: the package now passes `mypy` with no errors.
+
+### Changed
+- CI runs ruff, mypy and tests on Python 3.10-3.14 for every push and pull request.
+- Declared Python 3.13 and 3.14 support in classifiers.
+
 ## [0.4.2] - 2026-09-24
 
 ### Fixed
