@@ -6,20 +6,18 @@ Tests the italic/angled margins calculation and setting functions.
 
 import math
 
-import pytest
-
 from ufo_spacing_lib import (
-    SpacingEditor,
     SetMarginCommand,
+    SpacingEditor,
+    get_angled_margins,
     get_italic_angle,
     get_slant_factor,
     get_unskewed_bounds,
-    get_angled_margins,
     set_angled_left_margin,
     set_angled_right_margin,
 )
 
-from .mocks import MockFont, MockGlyph
+from .mocks import MockFont
 
 
 class TestGetItalicAngle:

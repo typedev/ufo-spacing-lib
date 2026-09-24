@@ -64,16 +64,6 @@ from .commands.margins import (
     AdjustMarginCommand,
     SetMarginCommand,
 )
-
-# Margins utilities
-from .margins_utils import (
-    get_angled_margins,
-    get_italic_angle,
-    get_slant_factor,
-    get_unskewed_bounds,
-    set_angled_left_margin,
-    set_angled_right_margin,
-)
 from .commands.rules import (
     RemoveMetricsRuleCommand,
     SetMetricsRuleCommand,
@@ -102,10 +92,18 @@ from .groups_core import (
     resolve_kern_pair,
 )
 
+# Margins utilities
+from .margins_utils import (
+    get_angled_margins,
+    get_italic_angle,
+    get_slant_factor,
+    get_unskewed_bounds,
+    set_angled_left_margin,
+    set_angled_right_margin,
+)
+
 # Metrics rules
 from .rules_core import (
-    RuleIssue,
-    ValidationReport,
     # Issue codes
     E_CYCLE,
     E_PARSE_ERROR,
@@ -118,6 +116,8 @@ from .rules_core import (
     W_MIXED_CONTOURS,
     W_SELF_REFERENCE,
     W_ZERO_WIDTH,
+    RuleIssue,
+    ValidationReport,
 )
 from .rules_generator import (
     RuleGenerationResult,

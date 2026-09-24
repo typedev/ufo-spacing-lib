@@ -1,17 +1,15 @@
 """Tests for rules_generator module."""
 
-import pytest
 
-from tests.mocks import MockFont, MockGlyph
+from tests.mocks import MockFont
 from ufo_spacing_lib.rules_core import (
     I_SINGLE_COMPONENT,
-    RuleIssue,
     W_COMPONENT_WIDER,
     W_EXTENDS_LEFT,
     W_EXTENDS_RIGHT,
     W_MISSING_BASE,
-    W_MIXED_CONTOURS,
     W_ZERO_WIDTH,
+    RuleIssue,
 )
 from ufo_spacing_lib.rules_generator import (
     RuleGenerationResult,

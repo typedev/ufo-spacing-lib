@@ -241,7 +241,7 @@ class SetMarginCommand(Command):
         delta: int,
         font_state: dict,
         recursive: bool = False,
-        rules_manager: "MetricsRulesManager | None" = None,
+        rules_manager: MetricsRulesManager | None = None,
         _visited: set | None = None,
     ) -> list[str]:
         """
@@ -586,7 +586,7 @@ class AdjustMarginCommand(Command):
         delta: int,
         font_state: dict,
         recursive: bool = False,
-        rules_manager: "MetricsRulesManager | None" = None,
+        rules_manager: MetricsRulesManager | None = None,
         _visited: set[str] | None = None,
     ) -> list[str]:
         """Propagate margin change to composite glyphs.
