@@ -240,38 +240,24 @@ pip install ufo-spacing-lib
 uv pip install ufo-spacing-lib
 ```
 
-## Шаг 9: GitHub Actions для автопубликации
+## Step 9: Releases via GitHub Actions (trusted publishing)
 
-Создать `.github/workflows/publish.yml`:
+`.github/workflows/publish.yml` publishes to PyPI when a `v*` tag is pushed.
+It checks that the tag matches the package version, runs the tests, builds,
+and uploads using PyPI trusted publishing (OIDC) - no API token is stored.
 
-```yaml
-name: Publish to PyPI
+One-time setup:
+- PyPI → ufo-spacing-lib → Settings → Publishing → add a GitHub publisher:
+  owner `typedev`, repository `ufo-spacing-lib`, workflow `publish.yml`,
+  environment `pypi`.
+- GitHub → repository Settings → Environments → `pypi` (optionally restrict
+  it to `v*` tags and require approval).
 
-on:
-  release:
-    types: [published]
+Release:
 
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-      
-      - name: Build package
-        run: uv build
-      
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          api-token: ${{ secrets.PYPI_API_TOKEN }}
+```bash
+uvx bump2version patch   # or minor / major; bumps uv.lock too, commits, tags vX.Y.Z
+git push origin main --follow-tags
 ```
 
 ## Шаг 10: Версионирование

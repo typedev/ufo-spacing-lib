@@ -41,6 +41,7 @@ dev = [
     "pytest-cov",
     "ruff",
     "mypy",
+    "fonttools",  # optional at runtime; needed for italic margins tests
 ]
 
 [project.urls]
