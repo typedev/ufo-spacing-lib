@@ -79,9 +79,20 @@ The library uses the Command pattern for all font modifications:
 - `RenameGroupCommand` - rename group, updating all kerning references
 - All commands store kerning state (pairs with values) for complete undo/redo
 
+**Margin Planner** (`planner.py`): pure planner for margin edits, the core of all margin maths
+- `plan_margin_edit(source, glyph, side, delta=|value=, rules=, reverse_map=, margins=, round_values=)` and `plan_sync(source, rules, names=)` return a `Plan` without mutating; `apply_plan(source, plan)` applies it; `Plan.inverted()` is an exact undo
+- `check_rules(source, rules, names=)` returns `RulesStatus` (`out_of_sync: list[OutOfSync]`, `issues`)
+- Works on a glyph source (font or layer): only `name in source` and `source[name]`, never `font.lib`
+- Model: a cascade of shift events. (1) Compensation, always on: composites using a glyph whose contents shift get the opposite, transform-aware offset on that component (`component_shift`), so they stay in place; no recursion. (2) Rules run in dependency order (Tarjan SCC; cycles skipped with E02); a left rule shifts contents + advance and is itself compensated, a right rule changes the advance only
+- Compensation never changes a drawing, so margins along the cascade = original reading + planned deltas, for any margin reader (`upright_margins`, `angled_margins(source, italic_angle)`, or custom)
+- A rule side runs only when the margin it reads changed in the plan; `plan_sync` forces its targets. The edited glyph is not re-ruled on the edited side (W10 issue)
+- `GlyphChange`: one merged change per glyph (`shift`, `width_delta` incl. the shift, `component_offsets`, `reasons`); `Plan.changes` in first-touch order, edited glyph first
+- Rule results are not rounded unless `round_values=True`
+
 **MetricsRulesManager** (`rules_manager.py`): Metrics keys system
 - Manages linked sidebearings with automatic cascade updates
 - Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
+- `MetricsRulesManager.from_rules(rules, source)` builds a detached manager from a dict on any glyph source (no autosave); `MetricsRulesManager(font)` loads from and autosaves to `font.lib`
 - Supported syntax: `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=H|` (opposite side)
 - Validation via `manager.validate()` returns `ValidationReport` with unified `RuleIssue` list
 - Cascade order computed via topological sort for correct update order
@@ -90,17 +101,20 @@ The library uses the Command pattern for all font modifications:
 **Rule Commands** (`commands/rules.py`): Undoable rule operations
 - `SetMetricsRuleCommand` - set or update a metrics rule
 - `RemoveMetricsRuleCommand` - remove a metrics rule
-- `SyncRulesCommand` - batch synchronization of all rules (for deferred updates)
+- `SyncRulesCommand` - batch synchronization of all rules (for deferred updates), wraps `plan_sync`
 - All support undo/redo and multi-font contexts
 
 **Rules Generator** (`rules_generator.py`): Generate rules from composite structure
 - `generate_rules_from_composites(font)` - analyzes composites and returns `RuleGenerationResult`
 - Component 0 (index 0) determines both left and right margins
 - Returns rules dict + issues list (warnings for edge cases like component extends beyond base)
+- `result.alternatives`: geometric proposal (left = smallest xMin component, right = largest xMax) when it differs from component 0, with a W09 issue; the library never picks
+- `result.skip_reasons`: `{glyph: SKIP_*}` for every skipped glyph
 
 **Unified Issue Reporting** (`rules_core.py`): Common issue format for validation and generation
 - `RuleIssue` dataclass with `glyph`, `code`, `message`, `severity`, `details`
-- Issue codes: `E01`/`E02` (errors), `W01`-`W08` (warnings), `I01` (info)
+- Issue codes: `E01`/`E02` (errors), `W01`-`W12` (warnings), `I01` (info)
+- Planner/generator codes: `W09` multi-body candidate, `W10` edit overrides own rule, `W11` glyph without outline, `W12` rule cannot be evaluated
 - Factory functions: `create_cycle_error()`, `create_missing_glyph_warning()`, etc.
 - Used by both `ValidationReport` and `RuleGenerationResult`
 
@@ -114,13 +128,16 @@ The library expects font objects with:
 - `font.groups` - dict-like for group management
 - `font.lib` - dict-like for storing metrics rules and metadata
 - `font[glyph_name]` - access to glyph objects with `leftMargin`, `rightMargin`, `width` attributes
-- See `tests/mocks.py` for mock implementations
+- See `tests/mocks.py` for mock implementations (`MockGlyph` simulates margins only)
+- `tests/geometry.py` has geometric mocks (`GSource`, `GGlyph`) with real bounds through transformed components; use them for planner/compensation tests (fontParts/defcon are not dev dependencies)
 
 ### Metrics Rules Integration
-Margin commands (`SetMarginCommand`, `AdjustMarginCommand`) have `apply_rules=True` by default:
-- When margin changes, dependent glyphs are automatically updated via cascade
-- Full undo/redo support for both main change and cascade effects
-- Set `apply_rules=False` to skip cascade (e.g., for manual overrides)
+`SetMarginCommand` / `AdjustMarginCommand` are thin wrappers over `plan_margin_edit`:
+- Composites built on the edited glyph always stay in place; they follow it only through rules
+- `apply_rules=True` by default: dependents update via the rules cascade; `apply_rules=False` keeps compensation but skips rules
+- Undo applies the inverted plan (exact for all glyphs touched)
+- `propagate_to_composites` / `recursive_propagate` are deprecated no-ops (DeprecationWarning)
+- `command.plan_for(font, context, rules_manager)` previews without mutating; `SpacingEditor.get_affected_glyphs_preview()` uses it
 - SpacingEditor automatically provides rules managers to margin commands
 
 ## Key Design Decisions
