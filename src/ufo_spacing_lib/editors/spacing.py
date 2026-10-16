@@ -316,8 +316,8 @@ class SpacingEditor:
         Preview which glyphs will be affected by a margin command.
 
         Call BEFORE execute() to know what to snapshot for external undo.
-        This method mirrors the internal logic of margin commands for
-        determining affected glyphs.
+        Uses the same planner as the command, so the result is exactly the
+        set of glyphs execute() will change (plus the edited glyph).
 
         Args:
             command: SetMarginCommand or AdjustMarginCommand to preview.
@@ -349,35 +349,13 @@ class SpacingEditor:
         if glyph_name not in target_font:
             return set()
 
-        side = command.side
-        propagate = getattr(command, 'propagate_to_composites', True)
-        apply_rules = getattr(command, 'apply_rules', True)
-
-        affected: set[str] = {glyph_name}
-
-        # Get rules manager for this font
-        rules_manager = None
-        if apply_rules:
-            rules_manager = self._rules_managers.get(id(target_font))
-
-        # Add composites (skip those with rules - cascade handles them)
-        if propagate and hasattr(target_font, 'getReverseComponentMapping'):
-            reverse_map = target_font.getReverseComponentMapping()
-            if glyph_name in reverse_map:
-                for comp_name in reverse_map[glyph_name]:
-                    if comp_name not in target_font:
-                        continue
-                    # Skip composites that have rules for this side
-                    if rules_manager and rules_manager.has_rule(comp_name, side):
-                        continue
-                    affected.add(comp_name)
-
-        # Add glyphs affected by rules cascade
-        if rules_manager:
-            cascade_glyphs = rules_manager.get_affected_glyphs(glyph_name, side)
-            affected.update(cascade_glyphs)
-
-        return affected
+        context = self._context
+        if context is None or not any(f is target_font for f in context.fonts):
+            context = FontContext.from_single_font(target_font)
+        plan = command.plan_for(
+            target_font, context, self._rules_managers.get(id(target_font))
+        )
+        return {glyph_name} | plan.names
 
     # =========================================================================
     # Command Execution

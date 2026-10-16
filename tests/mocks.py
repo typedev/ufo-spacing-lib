@@ -252,6 +252,9 @@ class MockGlyph:
     @property
     def leftMargin(self) -> int | None:
         """Get left margin (xMin of content)."""
+        # Reading a margin ends the setup sequence (margins, then width), so a
+        # later width change is a plain advance change, as in a real glyph.
+        self._recalc_on_width = False
         if self._content_xmin is None:
             return self._left_margin
         return self._content_xmin + self._content_offset_x
@@ -275,6 +278,7 @@ class MockGlyph:
     @property
     def rightMargin(self) -> int | None:
         """Get right margin (width - xMax of content)."""
+        self._recalc_on_width = False
         if self._content_xmax is None:
             return self._right_margin
         xMax = self._content_xmax + self._content_offset_x
@@ -301,13 +305,24 @@ class MockGlyph:
 
     def moveBy(self, delta: tuple[int, int]):
         """
-        Move the glyph by a delta.
+        Move the glyph contents (outline, components, anchors) by a delta.
+
+        Like fontParts, this does not change the width.
 
         Args:
             delta: (dx, dy) movement.
         """
-        # In a real glyph this would move contours
-        pass
+        dx, dy = delta
+        if self._content_xmin is not None:
+            self._content_offset_x += dx
+        for component in self.components:
+            component.moveBy(delta)
+        for anchor in self.anchors:
+            anchor.x += dx
+            anchor.y += dy
+        for guideline in self.guidelines:
+            if guideline.x is not None:
+                guideline.x += dx
 
     def changed(self):
         """Mark the glyph as changed."""
@@ -340,6 +355,7 @@ class MockGlyph:
     def set_has_contours(self, value: bool = True):
         """Mark glyph as having its own contours (mixed composite)."""
         self._has_contours_flag = value
+        self.contours = [MockContour([(0, 0)])] if value else []
 
     def __iter__(self):
         """Iterate over contours."""
@@ -578,7 +594,7 @@ class MockFont:
         else:
             glyph = MockGlyph(name)
 
-        component = MockComponent(base_glyph, offset)
+        component = MockComponent(base_glyph, (1, 0, 0, 1, offset[0], offset[1]))
         glyph.components.append(component)
 
         self._glyphs[name] = glyph

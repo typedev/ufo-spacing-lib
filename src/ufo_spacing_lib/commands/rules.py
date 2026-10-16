@@ -21,6 +21,7 @@ Example:
 from __future__ import annotations
 
 from ..contexts import FontContext
+from ..planner import Plan, apply_plan, plan_sync
 from ..rules_manager import MetricsRulesManager
 from .base import Command, CommandResult
 
@@ -270,7 +271,7 @@ class SyncRulesCommand(Command):
 
     Attributes:
         source_glyphs: Optional list of glyphs that changed. If None,
-            syncs all glyphs that have dependents.
+            syncs every glyph that has a rule.
 
     Example:
         >>> # Make changes without triggering rules
@@ -290,11 +291,11 @@ class SyncRulesCommand(Command):
 
         Args:
             source_glyphs: Optional list of glyphs that changed.
-                If None, syncs all glyphs with dependents.
+                If None, syncs all glyphs with rules.
         """
         self.source_glyphs = source_glyphs
-        # Previous margin values per font for undo: {font_id: {glyph: {side: value}}}
-        self._previous_values: dict[int, dict[str, dict[str, int | None]]] = {}
+        # Applied plans per font for undo: {font_id: Plan}
+        self._plans: dict[int, Plan] = {}
         # Glyphs that were actually modified
         self._affected_glyphs: list[str] = []
 
@@ -313,83 +314,51 @@ class SyncRulesCommand(Command):
         """
         Execute the command, applying all rules.
 
+        Composites built on a glyph that a rule moves stay in place.
+
         Args:
             context: Font context containing fonts to operate on.
             rules_managers: Dict mapping font id to MetricsRulesManager.
 
         Returns:
-            CommandResult with affected glyphs.
+            CommandResult with affected glyphs and rule issues as warnings.
         """
         if rules_managers is None:
             return CommandResult.error("Rules managers not provided")
 
-        all_affected: set[str] = set()
+        affected: list[str] = []
+        warnings: list[str] = []
+        self._plans = {}
 
         for font in context:
-            font_id = id(font)
-            manager = rules_managers.get(font_id)
+            manager = rules_managers.get(id(font))
             if manager is None:
                 continue
 
-            # Determine source glyphs
+            # Targets: the glyphs whose rules read the changed glyphs
+            targets: set[str] | None = None
             if self.source_glyphs:
-                sources = self.source_glyphs
-            else:
-                # Get all glyphs that have dependents
-                sources = list(manager._dependents_cache.keys())
+                targets = set()
+                for source in self.source_glyphs:
+                    targets.update(manager.get_affected_glyphs(source))
 
-            # Collect all affected glyphs in topological order
-            glyphs_to_sync: list[str] = []
-            seen: set[str] = set()
+            plan = plan_sync(font, manager, targets)
+            apply_plan(font, plan)
+            self._plans[id(font)] = plan
+            warnings.extend(str(issue) for issue in plan.issues)
+            for name in plan.ordered_names:
+                if name not in affected:
+                    affected.append(name)
 
-            for source in sources:
-                cascade = manager.get_cascade_order(source)
-                for g in cascade:
-                    if g not in seen:
-                        seen.add(g)
-                        glyphs_to_sync.append(g)
+        self._affected_glyphs = affected
 
-            if not glyphs_to_sync:
-                continue
-
-            # Save previous values for undo
-            self._previous_values[font_id] = {}
-            for glyph in glyphs_to_sync:
-                if glyph not in font:
-                    continue
-                g = font[glyph]
-                self._previous_values[font_id][glyph] = {
-                    'left': g.leftMargin,
-                    'right': g.rightMargin,
-                }
-
-            # Apply rules in order
-            for glyph in glyphs_to_sync:
-                if glyph not in font:
-                    continue
-
-                g = font[glyph]
-
-                # Check and apply left rule
-                left_value = manager.evaluate(glyph, 'left')
-                if left_value is not None and g.leftMargin != left_value:
-                    g.leftMargin = left_value
-                    all_affected.add(glyph)
-
-                # Check and apply right rule
-                right_value = manager.evaluate(glyph, 'right')
-                if right_value is not None and g.rightMargin != right_value:
-                    g.rightMargin = right_value
-                    all_affected.add(glyph)
-
-        self._affected_glyphs = list(all_affected)
-
-        if all_affected:
+        if affected:
             return CommandResult.ok(
-                f"Synced {len(all_affected)} glyphs",
+                f"Synced {len(affected)} glyphs",
+                warnings=warnings,
                 affected_glyphs=self._affected_glyphs,
             )
-        return CommandResult.ok("No changes needed")
+        return CommandResult.ok("No changes needed", warnings=warnings)
 
     def undo(
         self,
@@ -397,7 +366,7 @@ class SyncRulesCommand(Command):
         rules_managers: dict[int, MetricsRulesManager] | None = None,
     ) -> CommandResult:
         """
-        Undo the sync, restoring previous margin values.
+        Undo the sync by applying the inverted plans.
 
         Args:
             context: Font context containing fonts to operate on.
@@ -407,17 +376,10 @@ class SyncRulesCommand(Command):
             CommandResult indicating success.
         """
         for font in context:
-            font_id = id(font)
-            previous = self._previous_values.get(font_id, {})
-
-            for glyph, values in previous.items():
-                if glyph not in font:
-                    continue
-                g = font[glyph]
-                if values['left'] is not None:
-                    g.leftMargin = values['left']
-                if values['right'] is not None:
-                    g.rightMargin = values['right']
+            plan = self._plans.get(id(font))
+            if plan is not None:
+                apply_plan(font, plan.inverted())
+        self._plans = {}
 
         return CommandResult.ok(
             f"Restored {len(self._affected_glyphs)} glyphs",

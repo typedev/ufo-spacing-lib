@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-16
+
+### Added
+- Margin planner (`ufo_spacing_lib.planner`): a pure planner that returns every
+  change a margin edit implies without touching the font.
+  - `plan_margin_edit(source, glyph, side, delta=|value=, rules=, reverse_map=,
+    margins=, round_values=)` and `plan_sync(source, rules, names=)` return a
+    `Plan` (`changes`, `names`, `issues`); `apply_plan(source, plan)` applies it;
+    `Plan.inverted()` undoes it.
+  - `check_rules(source, rules, names=)` returns a `RulesStatus` with
+    out-of-sync glyph sides (`OutOfSync`) and validation issues.
+  - Composites built on a glyph whose contents shift are always held in place,
+    transform-aware (mirrored, scaled, rotated components). A rule's contents
+    shift is itself a shift event, so nested composites follow their rules and
+    stay intact.
+  - Everything works on a glyph source (font or layer); no `font.lib` access.
+  - Float-safe: rule results are not rounded unless `round_values=True`.
+  - Pluggable margin reader (`margins=`), with `upright_margins` and
+    `angled_margins(source, italic_angle)`.
+  - `build_reverse_component_map(source)` and `component_shift()`.
+- `MetricsRulesManager(rules=..., source=..., autosave=...)` and
+  `MetricsRulesManager.from_rules(rules, source)`: a manager built from a rules
+  dict on any glyph source. New `save()` and `get_parsed_rule()`.
+- `ParsedRule.apply()` and `ParsedRule.source_side_for()`.
+- `evaluate(..., rounded=False)` returns the exact value.
+- Issue codes: `W09` multi-body candidate (generator), `W10` edit overrides
+  the glyph's own rule, `W11` glyph without outline, `W12` rule cannot be
+  evaluated (division by zero).
+- Generator: `RuleGenerationResult.alternatives` holds a geometric proposal
+  (left from the component with the smallest xMin, right from the one with the
+  largest xMax) when it differs from component 0, with a `W09` issue carrying
+  both proposals. `RuleGenerationResult.skip_reasons` explains every skipped
+  glyph.
+- Margin commands: `plan_for(font, context, rules_manager)` previews a command.
+
+### Changed
+- `SetMarginCommand`, `AdjustMarginCommand` and `SyncRulesCommand` are thin
+  wrappers over the planner. Undo applies the inverted plan.
+- **Behaviour:** without a rule, composites no longer follow a left-margin edit
+  of their base; they stay in place. With a rule, they follow it.
+- `propagate_to_composites` and `recursive_propagate` are deprecated no-ops
+  (a `DeprecationWarning` is raised when set).
+- `SpacingEditor.get_affected_glyphs_preview()` uses the planner and returns
+  exactly the glyphs `execute()` changes.
+- Generator: component bounds use the full transformation; mixed composites are
+  detected by contour count when the glyph exposes one; it accepts a layer.
+- Rule command results now carry rule issues as `warnings`.
+
+### Fixed
+- A single-component composite lost its component offset on a left edit of its
+  base.
+- Editing a non-base component moved it twice and never moved the composite's
+  anchors and own contours.
+- Scaled, mirrored and rotated components were shifted by the raw delta.
+- Undo restored composites before their base, restored margins only (not width
+  or component offsets) and left composites broken.
+- Angled left `SetMarginCommand` did not change the width.
+- `SetMarginCommand` on an empty glyph used the whole value as the width.
+- Margin commands only work through `name in font` / `font[name]`, so a layer
+  can stand in for a font.
+- A composite whose rule points at another glyph no longer receives a
+  propagation shift that fights the rule.
+
 ## [0.4.3] - 2026-09-24
 
 ### Fixed

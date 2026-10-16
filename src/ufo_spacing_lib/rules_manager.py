@@ -67,16 +67,34 @@ class MetricsRulesManager:
         ...     print("All rules are valid")
     """
 
-    def __init__(self, font: Any):
+    def __init__(
+        self,
+        font: Any = None,
+        *,
+        rules: dict | None = None,
+        source: Any = None,
+        autosave: bool | None = None,
+    ):
         """
-        Initialize the manager for a font.
+        Initialize the manager.
 
         Args:
-            font: Font object with `lib` attribute for storage and
-                glyph access via `font[glyph_name]`.
+            font: Font object with a `lib` attribute. Rules are loaded from
+                and saved to `font.lib` unless `rules` is given.
+            rules: Rules to use instead of `font.lib`. Either the `rules`
+                value of the lib key ({glyph: {side: rule}}) or the whole
+                lib value ({"version": 1, "rules": {...}}).
+            source: Glyph source used to read margins and check that
+                glyphs exist: any object with `name in source` and
+                `source[name]` (a font or a layer). Defaults to `font`.
+            autosave: Save to `font.lib` after every modification.
+                Defaults to True when rules are loaded from the font and
+                False when `rules` is given.
         """
         self._font = font
+        self._source = source if source is not None else font
         self._parser = RuleParser()
+        self._autosave = autosave if autosave is not None else rules is None
 
         # Raw rules: {glyph: {side: rule_string}}
         self._rules: dict[str, dict[str, str]] = {}
@@ -87,14 +105,36 @@ class MetricsRulesManager:
         # Reverse dependency cache: {source_glyph: {dependent_glyphs}}
         self._dependents_cache: dict[str, set[str]] = {}
 
-        # Load existing rules from font
-        self._load_from_font()
+        if rules is not None:
+            self._rules = _coerce_rules(rules)
+        else:
+            # Load existing rules from font
+            self._load_from_font()
         self._rebuild_caches()
+
+    @classmethod
+    def from_rules(cls, rules: dict, source: Any = None) -> MetricsRulesManager:
+        """
+        Create a manager from a rules dict, detached from any font.lib.
+
+        Args:
+            rules: {glyph: {side: rule}} or the whole lib value.
+            source: Glyph source (font or layer) for margins and lookups.
+
+        Returns:
+            A manager that never saves to a font.
+        """
+        return cls(None, rules=rules, source=source, autosave=False)
 
     @property
     def font(self) -> Any:
         """The font this manager is associated with."""
         return self._font
+
+    @property
+    def source(self) -> Any:
+        """The glyph source used for margins and glyph lookups."""
+        return self._source
 
     # =========================================================================
     # Load / Save
@@ -102,7 +142,7 @@ class MetricsRulesManager:
 
     def _load_from_font(self) -> None:
         """Load rules from font.lib."""
-        if not hasattr(self._font, "lib"):
+        if self._font is None or not hasattr(self._font, "lib"):
             return
 
         data = self._font.lib.get(METRICS_RULES_LIB_KEY)
@@ -115,15 +155,11 @@ class MetricsRulesManager:
             # Future: handle version migration
             return
 
-        rules = data.get("rules", {})
-        if isinstance(rules, dict):
-            self._rules = {
-                glyph: dict(sides) for glyph, sides in rules.items()
-            }
+        self._rules = _coerce_rules(data)
 
-    def _save_to_font(self) -> None:
-        """Save rules to font.lib."""
-        if not hasattr(self._font, "lib"):
+    def save(self) -> None:
+        """Save rules to `font.lib` (no-op without a font)."""
+        if self._font is None or not hasattr(self._font, "lib"):
             return
 
         self._font.lib[METRICS_RULES_LIB_KEY] = {
@@ -132,6 +168,11 @@ class MetricsRulesManager:
                 glyph: dict(sides) for glyph, sides in self._rules.items()
             },
         }
+
+    def _save_to_font(self) -> None:
+        """Save after a modification when autosave is on."""
+        if self._autosave:
+            self.save()
 
     # =========================================================================
     # Cache Management
@@ -179,6 +220,15 @@ class MetricsRulesManager:
             Rule string or None if no rule defined.
         """
         return self._rules.get(glyph, {}).get(side)
+
+    def get_parsed_rule(self, glyph: str, side: str) -> ParsedRule | None:
+        """
+        Get the parsed rule for glyph/side.
+
+        Returns:
+            ParsedRule, or None if there is no rule or it does not parse.
+        """
+        return self._parsed_cache.get(glyph, {}).get(side)
 
     def get_rules_for_glyph(self, glyph: str) -> dict[str, str] | None:
         """
@@ -442,7 +492,7 @@ class MetricsRulesManager:
     def _glyph_exists(self, glyph: str) -> bool:
         """Check if glyph exists in font."""
         try:
-            return glyph in self._font
+            return glyph in self._source
         except (TypeError, AttributeError):
             return False
 
@@ -450,13 +500,17 @@ class MetricsRulesManager:
     # Evaluation
     # =========================================================================
 
-    def evaluate(self, glyph: str, side: str) -> int | None:
+    def evaluate(
+        self, glyph: str, side: str, *, rounded: bool = True
+    ) -> float | None:
         """
         Evaluate rule and return computed margin value.
 
         Args:
             glyph: Glyph name.
             side: "left" or "right".
+            rounded: Round the result of an arithmetic rule to an integer
+                (the 0.4 behaviour). Pass False for the exact value.
 
         Returns:
             Computed margin value, or None if no rule or evaluation fails.
@@ -465,54 +519,26 @@ class MetricsRulesManager:
         if not parsed:
             return None
 
-        # Get source value
-        if parsed.is_symmetry:
-            # =| means RSB = LSB of same glyph (or vice versa)
-            opposite_side = "left" if side == "right" else "right"
-            source_value = self._get_margin(glyph, opposite_side)
-        elif parsed.source_glyph:
-            # Determine source side
-            if parsed.source_side == SOURCE_SIDE_OPPOSITE:
-                # =H| means target.left = source.right (or vice versa)
-                source_side = "right" if side == "left" else "left"
-            else:
-                # Same side as target
-                source_side = side
-            source_value = self._get_margin(parsed.source_glyph, source_side)
-        else:
+        source_glyph = glyph if parsed.is_symmetry else parsed.source_glyph
+        if source_glyph is None:
             return None
-
+        source_value = self._get_margin(source_glyph, parsed.source_side_for(side))
         if source_value is None:
             return None
 
-        # Apply operator
-        if parsed.operator is None:
-            return source_value
+        value = parsed.apply(source_value)
+        if value is None or parsed.operator is None or not rounded:
+            return value
+        return round(value)
 
-        if parsed.operand is None:
-            return source_value
-
-        if parsed.operator == "+":
-            return round(source_value + parsed.operand)
-        elif parsed.operator == "-":
-            return round(source_value - parsed.operand)
-        elif parsed.operator == "*":
-            return round(source_value * parsed.operand)
-        elif parsed.operator == "/":
-            if parsed.operand == 0:
-                return None
-            return round(source_value / parsed.operand)
-
-        return source_value
-
-    def _get_margin(self, glyph: str, side: str) -> int | None:
-        """Get margin value from font."""
+    def _get_margin(self, glyph: str, side: str) -> float | None:
+        """Get upright margin value from the glyph source."""
         if not self._glyph_exists(glyph):
             return None
 
         try:
-            g = self._font[glyph]
-            margin: int | None = g.leftMargin if side == "left" else g.rightMargin
+            g = self._source[glyph]
+            margin: float | None = g.leftMargin if side == "left" else g.rightMargin
             return margin
         except (AttributeError, KeyError):
             return None
@@ -610,3 +636,14 @@ class MetricsRulesManager:
     def __bool__(self) -> bool:
         """Return True if any rules exist."""
         return len(self._rules) > 0
+
+
+def _coerce_rules(data: Any) -> dict[str, dict[str, str]]:
+    """Copy rules from either the lib value or its `rules` dict."""
+    if not isinstance(data, dict):
+        return {}
+    if isinstance(data.get("version"), int) and isinstance(data.get("rules"), dict):
+        data = data["rules"]
+    return {
+        glyph: dict(sides) for glyph, sides in data.items() if isinstance(sides, dict)
+    }

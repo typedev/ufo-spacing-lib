@@ -7,9 +7,14 @@ Commands:
     - SetMarginCommand: Set margin to an absolute value
     - AdjustMarginCommand: Adjust margin by a delta value
 
+Both commands are thin wrappers over the margin planner
+(`ufo_spacing_lib.planner`): they plan the edit for each font in the
+context, apply the plan and keep it so undo can apply the inverted plan.
+
 Features:
     - Support for left and right margins
-    - Automatic propagation to composite glyphs
+    - Composites built on an edited glyph stay intact (transform-aware
+      compensation, always on)
     - Per-font scaling for interpolation-aware editing
     - Automatic application of metrics rules with cascade
     - Full undo/redo capability
@@ -36,15 +41,13 @@ Example:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..contexts import FontContext
-from ..margins_utils import (
-    get_slant_factor,
-    set_angled_left_margin,
-    set_angled_right_margin,
-)
+from ..margins_utils import get_italic_angle
+from ..planner import Plan, angled_margins, apply_plan, plan_margin_edit
 from .base import Command, CommandResult
 
 if TYPE_CHECKING:
@@ -55,56 +58,128 @@ SIDE_LEFT = 'left'
 SIDE_RIGHT = 'right'
 
 
+def _warn_deprecated_propagation(command: Any) -> None:
+    if not command.propagate_to_composites or command.recursive_propagate:
+        warnings.warn(
+            "propagate_to_composites and recursive_propagate have no effect "
+            "since 0.5.0: composites built on an edited glyph are always "
+            "kept in place, and follow only through metrics rules.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+
+class _MarginCommandMixin:
+    """Shared execute/undo over the planner."""
+
+    glyph_name: str
+    side: str
+    apply_rules: bool
+    _plans: dict[int, Plan]
+
+    def _plan(
+        self,
+        context: FontContext,
+        font: Any,
+        rules_manager: MetricsRulesManager | None,
+    ) -> Plan:
+        raise NotImplementedError
+
+    def plan_for(
+        self,
+        font: Any,
+        context: FontContext | None = None,
+        rules_manager: MetricsRulesManager | None = None,
+    ) -> Plan:
+        """
+        Plan what this command would do to one font, without mutating it.
+
+        Args:
+            font: Font (or layer) to plan for.
+            context: Context used for per-font scaling. Defaults to a
+                single-font context with scale 1.
+            rules_manager: Rules to cascade; ignored when apply_rules is False.
+
+        Returns:
+            The Plan `execute` would apply to this font.
+        """
+        if context is None:
+            context = FontContext.from_single_font(font)
+        return self._plan(context, font, rules_manager if self.apply_rules else None)
+
+    def _run(
+        self,
+        context: FontContext,
+        rules_managers: dict[int, MetricsRulesManager] | None,
+    ) -> CommandResult:
+        warning_messages: list[str] = []
+        affected: list[str] = []
+        self._plans = {}
+
+        for font in context:
+            if self.glyph_name not in font:
+                continue
+            rules_manager = None
+            if self.apply_rules and rules_managers is not None:
+                rules_manager = rules_managers.get(id(font))
+
+            plan = self._plan(context, font, rules_manager)
+            apply_plan(font, plan)
+            self._plans[id(font)] = plan
+
+            warning_messages.extend(str(issue) for issue in plan.issues)
+            for name in plan.ordered_names:
+                if name not in affected:
+                    affected.append(name)
+
+        if not affected:
+            affected.append(self.glyph_name)
+        return CommandResult.ok(
+            message=self.description,  # type: ignore[attr-defined]
+            warnings=warning_messages,
+            affected_glyphs=affected,
+        )
+
+    def _undo(self, context: FontContext) -> CommandResult:
+        for font in context:
+            plan = self._plans.get(id(font))
+            if plan is not None:
+                apply_plan(font, plan.inverted())
+        self._plans = {}
+        return CommandResult.ok(f"Undid: {self.description}")  # type: ignore[attr-defined]
+
+
 @dataclass
-class SetMarginCommand(Command):
+class SetMarginCommand(_MarginCommandMixin, Command):
     """
     Command to set a glyph margin to an absolute value.
 
     Sets the left or right margin of a glyph to a specific value.
-    Optionally propagates the change to composite glyphs and applies
-    metrics rules to dependent glyphs.
+    Composites built on the glyph stay in place; glyphs with metrics
+    rules depending on it are updated through the rules cascade.
 
     Attributes:
         glyph_name: Name of the glyph to modify.
         side: Which margin to set - 'left' or 'right'.
         value: The margin value to set.
-        value_is_angled: If True, the value is interpreted as an angled
-            (visual) margin for italic fonts. The command will convert
-            it to physical margin internally. Default is False.
-        propagate_to_composites: If True (default), also updates
-            composite glyphs that use this glyph as a base component.
-        recursive_propagate: If True, propagation continues recursively
-            to composites of composites. Default is False.
+        value_is_angled: If True, the value is an angled (visual) margin,
+            measured along the font's italic angle. Default is False.
+        propagate_to_composites: Deprecated, no effect since 0.5.0.
+        recursive_propagate: Deprecated, no effect since 0.5.0.
         apply_rules: If True (default), applies metrics rules to glyphs
             that depend on this glyph.
 
     Example:
-        >>> # Set physical margin (default)
-        >>> cmd = SetMarginCommand(
-        ...     glyph_name='A',
-        ...     side='left',
-        ...     value=50,
-        ... )
+        >>> cmd = SetMarginCommand(glyph_name='A', side='left', value=50)
         >>> editor.execute(cmd)
         >>>
         >>> # Set angled margin (for italic UI)
-        >>> cmd = SetMarginCommand(
-        ...     glyph_name='A',
-        ...     side='left',
-        ...     value=50,
-        ...     value_is_angled=True,
-        ... )
+        >>> cmd = SetMarginCommand('A', 'left', 50, value_is_angled=True)
         >>> editor.execute(cmd)
 
     Note:
-        For glyphs without contours (like /space), modifying the
-        margin affects the glyph width instead.
-
-        For italic fonts, when value_is_angled=True:
-        - Left margin: shifts contours/components/anchors to achieve
-          the desired visual margin
-        - Right margin: adjusts glyph width to achieve the desired
-          visual margin
+        A glyph without outline has no margin to set: the command leaves
+        it unchanged and reports a W11 warning.
     """
 
     glyph_name: str
@@ -114,9 +189,10 @@ class SetMarginCommand(Command):
     propagate_to_composites: bool = True
     recursive_propagate: bool = False
     apply_rules: bool = True
-    _previous_state: dict[int, dict] = field(
-        default_factory=dict, repr=False, compare=False
-    )
+    _plans: dict[int, Plan] = field(default_factory=dict, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _warn_deprecated_propagation(self)
 
     @property
     def description(self) -> str:
@@ -128,23 +204,23 @@ class SetMarginCommand(Command):
         """
         return f"Set {self.side} margin {self.glyph_name} = {self.value}"
 
-    def _save_glyph_state(self, font: Any, glyph_name: str) -> dict:
-        """Save the current state of a glyph for undo."""
-        glyph = font[glyph_name]
-        return {
-            'leftMargin': glyph.leftMargin,
-            'rightMargin': glyph.rightMargin,
-            'width': glyph.width,
-        }
-
-    def _restore_glyph_state(self, font: Any, glyph_name: str, state: dict):
-        """Restore a glyph to a previous state."""
-        glyph = font[glyph_name]
-        # Restoring margins automatically moves contours/components
-        if state['leftMargin'] is not None:
-            glyph.leftMargin = state['leftMargin']
-        if state['rightMargin'] is not None:
-            glyph.rightMargin = state['rightMargin']
+    def _plan(
+        self,
+        context: FontContext,
+        font: Any,
+        rules_manager: MetricsRulesManager | None,
+    ) -> Plan:
+        margins = None
+        if self.value_is_angled:
+            margins = angled_margins(font, get_italic_angle(font))
+        return plan_margin_edit(
+            font,
+            self.glyph_name,
+            self.side,
+            value=context.scale_value(font, self.value),
+            rules=rules_manager,
+            margins=margins,
+        )
 
     def execute(
         self,
@@ -155,244 +231,13 @@ class SetMarginCommand(Command):
         Set the margin value for the glyph in all context fonts.
 
         Args:
-            context: FontContext with fonts to modify.
+            context: FontContext with fonts (or layers) to modify.
             rules_managers: Optional dict of rules managers keyed by font id.
 
         Returns:
-            CommandResult indicating success with optional warnings.
+            CommandResult with rule issues as warnings.
         """
-        warnings: list[str] = []
-        affected: list[str] = [self.glyph_name]
-
-        for font in context:
-            if self.glyph_name not in font:
-                continue
-
-            font_state: dict[str, dict[str, Any]] = {
-                'main': {}, 'composites': {}, 'cascade': {}
-            }
-            glyph = font[self.glyph_name]
-
-            # Save main glyph state
-            font_state['main'] = self._save_glyph_state(font, self.glyph_name)
-
-            # Calculate delta from current value
-            current_margin = (
-                glyph.leftMargin if self.side == SIDE_LEFT else glyph.rightMargin
-            )
-
-            scaled_value = context.scale_value(font, self.value)
-
-            # Handle angled margin conversion for italic fonts
-            if self.value_is_angled and get_slant_factor(font) != 0:
-                # Set angled margin (handles conversion internally)
-                if self.side == SIDE_LEFT:
-                    old_left = glyph.leftMargin
-                    set_angled_left_margin(glyph, font, scaled_value)
-                    delta = (glyph.leftMargin or 0) - (old_left or 0)
-                else:
-                    old_right = glyph.rightMargin
-                    set_angled_right_margin(glyph, font, scaled_value)
-                    delta = (glyph.rightMargin or 0) - (old_right or 0)
-            elif current_margin is not None:
-                delta = scaled_value - current_margin
-                if self.side == SIDE_LEFT:
-                    glyph.leftMargin = scaled_value
-                else:
-                    glyph.rightMargin = scaled_value
-            else:
-                # For empty glyphs, adjust width
-                delta = scaled_value
-                glyph.width = scaled_value
-
-            # Get rules manager for this font (needed for both propagate and cascade)
-            rules_manager = None
-            if self.apply_rules and rules_managers is not None:
-                rules_manager = rules_managers.get(id(font))
-
-            # Propagate to composites (skip those with rules - cascade handles them)
-            if self.propagate_to_composites and delta != 0:
-                modified = self._propagate_to_composites(
-                    font, self.glyph_name, self.side, delta, font_state,
-                    recursive=self.recursive_propagate,
-                    rules_manager=rules_manager,
-                )
-                affected.extend(modified)
-
-            # Apply rules cascade
-            if rules_manager:
-                cascade_warnings, cascade_affected = self._apply_rules_cascade(
-                    font, rules_manager, font_state
-                )
-                warnings.extend(cascade_warnings)
-                affected.extend(cascade_affected)
-
-            self._previous_state[id(font)] = font_state
-
-        return CommandResult.ok(
-            message=self.description,
-            warnings=warnings,
-            affected_glyphs=affected,
-        )
-
-    def _propagate_to_composites(
-        self,
-        font: Any,
-        glyph_name: str,
-        side: str,
-        delta: int,
-        font_state: dict,
-        recursive: bool = False,
-        rules_manager: MetricsRulesManager | None = None,
-        _visited: set | None = None,
-    ) -> list[str]:
-        """
-        Propagate margin change to composite glyphs.
-
-        Composites that have metrics rules for the affected side are skipped,
-        as their margins will be updated by the rules cascade instead.
-
-        Args:
-            font: The font object.
-            glyph_name: Name of the base glyph that changed.
-            side: Which side changed ('left' or 'right').
-            delta: The amount the margin changed.
-            font_state: State dict to save composite states into.
-            recursive: If True, continue to composites of composites.
-            rules_manager: Optional rules manager to check for rules.
-            _visited: Internal set to prevent infinite loops.
-
-        Returns:
-            List of composite glyph names that were modified.
-        """
-        modified: list[str] = []
-
-        if _visited is None:
-            _visited = set()
-
-        if glyph_name in _visited:
-            return modified
-        _visited.add(glyph_name)
-
-        if not hasattr(font, 'getReverseComponentMapping'):
-            return modified
-
-        map_glyphs = font.getReverseComponentMapping()
-        if glyph_name not in map_glyphs:
-            return modified
-
-        for comp_name in map_glyphs[glyph_name]:
-            if comp_name not in font or comp_name in _visited:
-                continue
-
-            # Skip composites that have rules for this side
-            # Rules take priority - cascade will handle them
-            if rules_manager and rules_manager.has_rule(comp_name, side):
-                continue
-
-            comp_glyph = font[comp_name]
-
-            # Save state (only if not already saved)
-            if comp_name not in font_state['composites']:
-                font_state['composites'][comp_name] = self._save_glyph_state(
-                    font, comp_name
-                )
-
-            if hasattr(comp_glyph, 'changed'):
-                comp_glyph.changed()
-
-            if side == SIDE_LEFT:
-                if hasattr(comp_glyph, 'components') and comp_glyph.components:
-                    if len(comp_glyph.components) > 1:
-                        for component in comp_glyph.components:
-                            component.moveBy((delta, 0))
-                        comp_glyph.components[0].moveBy((-delta, 0))
-                    elif len(comp_glyph.components) == 1:
-                        comp_glyph.components[0].moveBy((-delta, 0))
-                        offset_x, _ = comp_glyph.components[0].offset
-                        if offset_x != 0:
-                            comp_glyph.moveBy((-offset_x, 0))
-                            if hasattr(comp_glyph, 'changed'):
-                                comp_glyph.changed()
-                comp_glyph.width += delta
-
-            elif side == SIDE_RIGHT:
-                if comp_glyph.rightMargin is not None:
-                    comp_glyph.rightMargin += delta
-
-            modified.append(comp_name)
-
-            if recursive:
-                nested = self._propagate_to_composites(
-                    font, comp_name, side, delta, font_state,
-                    recursive=True,
-                    rules_manager=rules_manager,
-                    _visited=_visited,
-                )
-                modified.extend(nested)
-
-        return modified
-
-    def _apply_rules_cascade(
-        self,
-        font: Any,
-        rules_manager: MetricsRulesManager,
-        font_state: dict,
-    ) -> tuple[list[str], list[str]]:
-        """
-        Apply metrics rules to all dependent glyphs.
-
-        Args:
-            font: The font object.
-            rules_manager: MetricsRulesManager with rules.
-            font_state: State dict to save cascade states into.
-
-        Returns:
-            Tuple of (warnings, affected_glyphs).
-        """
-        warnings: list[str] = []
-        affected: list[str] = []
-
-        # Get ordered list of glyphs to update
-        cascade_glyphs = rules_manager.get_cascade_order(self.glyph_name)
-
-        for glyph_name in cascade_glyphs:
-            if glyph_name not in font:
-                continue
-
-            for side in [SIDE_LEFT, SIDE_RIGHT]:
-                rule = rules_manager.get_rule(glyph_name, side)
-                if not rule:
-                    continue
-
-                # Save state before modification (if not already saved)
-                state_key = f"{glyph_name}.{side}"
-                if state_key not in font_state['cascade']:
-                    font_state['cascade'][state_key] = {
-                        'glyph': glyph_name,
-                        'side': side,
-                        'state': self._save_glyph_state(font, glyph_name),
-                    }
-
-                # Evaluate and apply
-                try:
-                    new_value = rules_manager.evaluate(glyph_name, side)
-                    if new_value is not None:
-                        glyph = font[glyph_name]
-                        if side == SIDE_LEFT:
-                            glyph.leftMargin = new_value
-                        else:
-                            glyph.rightMargin = new_value
-
-                        if glyph_name not in affected:
-                            affected.append(glyph_name)
-
-                        if hasattr(glyph, 'changed'):
-                            glyph.changed()
-                except Exception as e:
-                    warnings.append(f"Rule for {glyph_name}.{side}: {e}")
-
-        return warnings, affected
+        return self._run(context, rules_managers)
 
     def undo(
         self,
@@ -400,7 +245,7 @@ class SetMarginCommand(Command):
         rules_managers: dict[int, MetricsRulesManager] | None = None,
     ) -> CommandResult:
         """
-        Restore the previous margin values.
+        Restore every glyph the command changed, by applying the inverted plan.
 
         Args:
             context: FontContext (same as used in execute).
@@ -409,59 +254,35 @@ class SetMarginCommand(Command):
         Returns:
             CommandResult indicating success.
         """
-        for font in context:
-            font_state = self._previous_state.get(id(font))
-            if not font_state:
-                continue
-
-            # Restore cascade changes first (in reverse order)
-            for item in reversed(list(font_state.get('cascade', {}).values())):
-                glyph_name = item['glyph']
-                if glyph_name in font:
-                    self._restore_glyph_state(font, glyph_name, item['state'])
-
-            # Restore composites
-            for comp_name, comp_state in font_state.get('composites', {}).items():
-                if comp_name in font:
-                    self._restore_glyph_state(font, comp_name, comp_state)
-
-            # Restore main glyph
-            if 'main' in font_state and self.glyph_name in font:
-                self._restore_glyph_state(
-                    font, self.glyph_name, font_state['main']
-                )
-
-        return CommandResult.ok(f"Undid: {self.description}")
+        return self._undo(context)
 
 
 @dataclass
-class AdjustMarginCommand(Command):
+class AdjustMarginCommand(_MarginCommandMixin, Command):
     """
     Command to adjust a glyph margin by a delta value.
 
     Adds the delta to the current margin value. This is the most
     common operation when using keyboard shortcuts to adjust spacing.
-    Optionally applies metrics rules to dependent glyphs.
+    Composites built on the glyph stay in place; glyphs with metrics
+    rules depending on it are updated through the rules cascade.
 
     Attributes:
         glyph_name: Name of the glyph to modify.
         side: Which margin to adjust - 'left' or 'right'.
         delta: The amount to add (negative to decrease).
-        propagate_to_composites: If True (default), also updates
-            composite glyphs that use this glyph as a base.
-        recursive_propagate: If True, propagation continues recursively
-            to composites of composites. Default is False.
+        propagate_to_composites: Deprecated, no effect since 0.5.0.
+        recursive_propagate: Deprecated, no effect since 0.5.0.
         apply_rules: If True (default), applies metrics rules to glyphs
             that depend on this glyph.
 
     Example:
-        >>> # Decrease right margin by 5 units
-        >>> cmd = AdjustMarginCommand(
-        ...     glyph_name='A',
-        ...     side='right',
-        ...     delta=-5,
-        ... )
+        >>> cmd = AdjustMarginCommand(glyph_name='A', side='right', delta=-5)
         >>> editor.execute(cmd)
+
+    Note:
+        For glyphs without outline (like /space), the delta changes the
+        glyph width.
     """
 
     glyph_name: str
@@ -470,9 +291,10 @@ class AdjustMarginCommand(Command):
     propagate_to_composites: bool = True
     recursive_propagate: bool = False
     apply_rules: bool = True
-    _previous_state: dict[int, dict] = field(
-        default_factory=dict, repr=False, compare=False
-    )
+    _plans: dict[int, Plan] = field(default_factory=dict, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        _warn_deprecated_propagation(self)
 
     @property
     def description(self) -> str:
@@ -485,23 +307,19 @@ class AdjustMarginCommand(Command):
         sign = "+" if self.delta > 0 else ""
         return f"Adjust {self.side} margin {self.glyph_name} {sign}{self.delta}"
 
-    def _save_glyph_state(self, font: Any, glyph_name: str) -> dict:
-        """Save the current state of a glyph for undo."""
-        glyph = font[glyph_name]
-        return {
-            'leftMargin': glyph.leftMargin,
-            'rightMargin': glyph.rightMargin,
-            'width': glyph.width,
-        }
-
-    def _restore_glyph_state(self, font: Any, glyph_name: str, state: dict):
-        """Restore a glyph to a previous state."""
-        glyph = font[glyph_name]
-        # Restoring margins automatically moves contours/components
-        if state['leftMargin'] is not None:
-            glyph.leftMargin = state['leftMargin']
-        if state['rightMargin'] is not None:
-            glyph.rightMargin = state['rightMargin']
+    def _plan(
+        self,
+        context: FontContext,
+        font: Any,
+        rules_manager: MetricsRulesManager | None,
+    ) -> Plan:
+        return plan_margin_edit(
+            font,
+            self.glyph_name,
+            self.side,
+            delta=context.scale_value(font, self.delta),
+            rules=rules_manager,
+        )
 
     def execute(
         self,
@@ -512,206 +330,13 @@ class AdjustMarginCommand(Command):
         Adjust the margin value for the glyph in all context fonts.
 
         Args:
-            context: FontContext with fonts to modify.
+            context: FontContext with fonts (or layers) to modify.
             rules_managers: Optional dict of rules managers keyed by font id.
 
         Returns:
-            CommandResult indicating success with optional warnings.
+            CommandResult with rule issues as warnings.
         """
-        warnings: list[str] = []
-        affected: list[str] = [self.glyph_name]
-
-        for font in context:
-            if self.glyph_name not in font:
-                continue
-
-            font_state: dict[str, dict[str, Any]] = {
-                'main': {}, 'composites': {}, 'cascade': {}
-            }
-            glyph = font[self.glyph_name]
-
-            # Save state
-            font_state['main'] = self._save_glyph_state(font, self.glyph_name)
-
-            # Calculate scaled delta
-            scaled_delta = context.scale_value(font, self.delta)
-
-            # Apply delta
-            if self.side == SIDE_LEFT:
-                if glyph.leftMargin is not None:
-                    glyph.leftMargin += scaled_delta
-                else:
-                    glyph.width += scaled_delta
-                    self._previous_state[id(font)] = font_state
-                    continue  # Don't propagate for empty glyphs
-            else:
-                if glyph.rightMargin is not None:
-                    glyph.rightMargin += scaled_delta
-                else:
-                    glyph.width += scaled_delta
-                    self._previous_state[id(font)] = font_state
-                    continue
-
-            # Get rules manager for this font (needed for both propagate and cascade)
-            rules_manager = None
-            if self.apply_rules and rules_managers is not None:
-                rules_manager = rules_managers.get(id(font))
-
-            # Propagate to composites (skip those with rules - cascade handles them)
-            if self.propagate_to_composites:
-                modified = self._propagate_to_composites(
-                    font, self.glyph_name, self.side, scaled_delta, font_state,
-                    recursive=self.recursive_propagate,
-                    rules_manager=rules_manager,
-                )
-                affected.extend(modified)
-
-            # Apply rules cascade
-            if rules_manager:
-                cascade_warnings, cascade_affected = self._apply_rules_cascade(
-                    font, rules_manager, font_state
-                )
-                warnings.extend(cascade_warnings)
-                affected.extend(cascade_affected)
-
-            self._previous_state[id(font)] = font_state
-
-        return CommandResult.ok(
-            message=self.description,
-            warnings=warnings,
-            affected_glyphs=affected,
-        )
-
-    def _propagate_to_composites(
-        self,
-        font: Any,
-        glyph_name: str,
-        side: str,
-        delta: int,
-        font_state: dict,
-        recursive: bool = False,
-        rules_manager: MetricsRulesManager | None = None,
-        _visited: set[str] | None = None,
-    ) -> list[str]:
-        """Propagate margin change to composite glyphs.
-
-        Composites that have metrics rules for the affected side are skipped,
-        as their margins will be updated by the rules cascade instead.
-        """
-        modified: list[str] = []
-
-        if _visited is None:
-            _visited = set()
-
-        if glyph_name in _visited:
-            return modified
-        _visited.add(glyph_name)
-
-        if not hasattr(font, 'getReverseComponentMapping'):
-            return modified
-
-        map_glyphs = font.getReverseComponentMapping()
-        if glyph_name not in map_glyphs:
-            return modified
-
-        for comp_name in map_glyphs[glyph_name]:
-            if comp_name not in font or comp_name in _visited:
-                continue
-
-            # Skip composites that have rules for this side
-            # Rules take priority - cascade will handle them
-            if rules_manager and rules_manager.has_rule(comp_name, side):
-                continue
-
-            comp_glyph = font[comp_name]
-
-            if comp_name not in font_state['composites']:
-                font_state['composites'][comp_name] = self._save_glyph_state(
-                    font, comp_name
-                )
-
-            if hasattr(comp_glyph, 'changed'):
-                comp_glyph.changed()
-
-            if side == SIDE_LEFT:
-                if hasattr(comp_glyph, 'components') and comp_glyph.components:
-                    if len(comp_glyph.components) > 1:
-                        for component in comp_glyph.components:
-                            component.moveBy((delta, 0))
-                        comp_glyph.components[0].moveBy((-delta, 0))
-                    elif len(comp_glyph.components) == 1:
-                        comp_glyph.components[0].moveBy((-delta, 0))
-                        offset_x, _ = comp_glyph.components[0].offset
-                        if offset_x != 0:
-                            comp_glyph.moveBy((-offset_x, 0))
-                            if hasattr(comp_glyph, 'changed'):
-                                comp_glyph.changed()
-                comp_glyph.width += delta
-
-            elif side == SIDE_RIGHT:
-                if comp_glyph.rightMargin is not None:
-                    comp_glyph.rightMargin += delta
-
-            modified.append(comp_name)
-
-            if recursive:
-                nested = self._propagate_to_composites(
-                    font, comp_name, side, delta, font_state,
-                    recursive=True,
-                    rules_manager=rules_manager,
-                    _visited=_visited,
-                )
-                modified.extend(nested)
-
-        return modified
-
-    def _apply_rules_cascade(
-        self,
-        font: Any,
-        rules_manager: MetricsRulesManager,
-        font_state: dict,
-    ) -> tuple[list[str], list[str]]:
-        """Apply metrics rules to all dependent glyphs."""
-        warnings: list[str] = []
-        affected: list[str] = []
-
-        cascade_glyphs = rules_manager.get_cascade_order(self.glyph_name)
-
-        for glyph_name in cascade_glyphs:
-            if glyph_name not in font:
-                continue
-
-            for side in [SIDE_LEFT, SIDE_RIGHT]:
-                rule = rules_manager.get_rule(glyph_name, side)
-                if not rule:
-                    continue
-
-                state_key = f"{glyph_name}.{side}"
-                if state_key not in font_state['cascade']:
-                    font_state['cascade'][state_key] = {
-                        'glyph': glyph_name,
-                        'side': side,
-                        'state': self._save_glyph_state(font, glyph_name),
-                    }
-
-                try:
-                    new_value = rules_manager.evaluate(glyph_name, side)
-                    if new_value is not None:
-                        glyph = font[glyph_name]
-                        if side == SIDE_LEFT:
-                            glyph.leftMargin = new_value
-                        else:
-                            glyph.rightMargin = new_value
-
-                        if glyph_name not in affected:
-                            affected.append(glyph_name)
-
-                        if hasattr(glyph, 'changed'):
-                            glyph.changed()
-                except Exception as e:
-                    warnings.append(f"Rule for {glyph_name}.{side}: {e}")
-
-        return warnings, affected
+        return self._run(context, rules_managers)
 
     def undo(
         self,
@@ -719,7 +344,7 @@ class AdjustMarginCommand(Command):
         rules_managers: dict[int, MetricsRulesManager] | None = None,
     ) -> CommandResult:
         """
-        Restore the previous margin values.
+        Restore every glyph the command changed, by applying the inverted plan.
 
         Args:
             context: FontContext (same as used in execute).
@@ -728,26 +353,4 @@ class AdjustMarginCommand(Command):
         Returns:
             CommandResult indicating success.
         """
-        for font in context:
-            font_state = self._previous_state.get(id(font))
-            if not font_state:
-                continue
-
-            # Restore cascade first
-            for item in reversed(list(font_state.get('cascade', {}).values())):
-                glyph_name = item['glyph']
-                if glyph_name in font:
-                    self._restore_glyph_state(font, glyph_name, item['state'])
-
-            # Restore composites
-            for comp_name, comp_state in font_state.get('composites', {}).items():
-                if comp_name in font:
-                    self._restore_glyph_state(font, comp_name, comp_state)
-
-            # Restore main glyph
-            if 'main' in font_state and self.glyph_name in font:
-                self._restore_glyph_state(
-                    font, self.glyph_name, font_state['main']
-                )
-
-        return CommandResult.ok(f"Undid: {self.description}")
+        return self._undo(context)

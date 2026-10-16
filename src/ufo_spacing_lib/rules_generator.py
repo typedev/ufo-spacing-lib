@@ -27,9 +27,16 @@ from .rules_core import (
     create_extends_right_warning,
     create_missing_base_warning,
     create_mixed_contours_warning,
+    create_multi_body_warning,
     create_single_component_info,
     create_zero_width_warning,
 )
+
+# Skip reasons (RuleGenerationResult.skip_reasons values)
+SKIP_EXISTING_RULES = "existing_rules"
+SKIP_MIXED_CONTOURS = "mixed_contours"
+SKIP_MISSING_BASE = "missing_base"
+SKIP_SINGLE_COMPONENT = "single_component_excluded"
 
 # =============================================================================
 # Result Class
@@ -46,11 +53,26 @@ class RuleGenerationResult:
             Format: {"Aacute": {"left": "=A", "right": "=A"}}
         issues: List of issues (warnings/info) generated during analysis.
         skipped: List of glyph names that were skipped.
+        skip_reasons: Why each skipped glyph was skipped:
+            {"Abar": "mixed_contours"}. One of SKIP_EXISTING_RULES,
+            SKIP_MIXED_CONTOURS, SKIP_MISSING_BASE, SKIP_SINGLE_COMPONENT.
+        alternatives: Geometric proposals for multi-body candidates:
+            left from the component with the smallest xMin, right from the
+            one with the largest xMax. Only present when it differs from
+            the default (component 0); each has a W09 issue. The library
+            does not choose: `rules` always holds the default.
     """
 
     rules: dict[str, dict[str, str]] = field(default_factory=dict)
     issues: list[RuleIssue] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    skip_reasons: dict[str, str] = field(default_factory=dict)
+    alternatives: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def skip(self, glyph_name: str, reason: str) -> None:
+        """Record a skipped glyph with its reason."""
+        self.skipped.append(glyph_name)
+        self.skip_reasons[glyph_name] = reason
 
     def __len__(self) -> int:
         """Return number of rules generated."""
@@ -93,40 +115,69 @@ def _get_component_bounds(
     font: Any, component: Any
 ) -> tuple[float, float, float] | None:
     """
-    Get bounds of a component with transformation applied.
+    Get horizontal bounds of a component as drawn in the composite.
+
+    The base glyph's bounding box is mapped through the full
+    transformation (scale, mirror, rotation and offset).
 
     Args:
-        font: Font object.
+        font: Glyph source.
         component: Component object with baseGlyph and transformation.
 
     Returns:
         Tuple of (left, right, width) or None if bounds unavailable.
     """
+    box = _get_component_box(font, component)
+    if box is None:
+        return None
+    left, _, right, _ = box
+    return (left, right, right - left)
+
+
+def _get_component_box(
+    font: Any, component: Any
+) -> tuple[float, float, float, float] | None:
+    """Bounding box of the base glyph's box mapped through the transformation."""
     base_name = component.baseGlyph
     if base_name not in font:
         return None
 
-    base = font[base_name]
-    bounds = base.bounds
+    bounds = font[base_name].bounds
     if bounds is None:
         return None
 
-    # Apply transformation offset
-    t = component.transformation
-    left = bounds[0] + t[4]
-    right = bounds[2] + t[4]
-    width = right - left
-
-    return (left, right, width)
+    xx, xy, yx, yy, dx, dy = component.transformation
+    x0, y0, x1, y1 = bounds
+    corners = [
+        (xx * x + yx * y + dx, xy * x + yy * y + dy)
+        for x in (x0, x1)
+        for y in (y0, y1)
+    ]
+    xs = [c[0] for c in corners]
+    ys = [c[1] for c in corners]
+    return (min(xs), min(ys), max(xs), max(ys))
 
 
 def _has_own_contours(font: Any, glyph: Any) -> bool:
     """
     Check if glyph has its own contours (not just components).
 
-    Compares glyph bounds with calculated component bounds.
-    If glyph bounds is None (pure composite), returns False.
+    Uses the contour count when the glyph exposes one (`glyph.contours`
+    in fontParts, `len(glyph)` in defcon). Otherwise compares glyph
+    bounds with the union of component bounds.
     """
+    contours = getattr(glyph, "contours", None)
+    if contours is not None:
+        try:
+            return len(contours) > 0
+        except TypeError:
+            pass
+    elif hasattr(glyph, "__len__"):
+        try:
+            return len(glyph) > 0
+        except TypeError:
+            pass
+
     if not glyph.components:
         return glyph.bounds is not None
 
@@ -139,23 +190,9 @@ def _has_own_contours(font: Any, glyph: Any) -> bool:
     # Calculate bounds from components only
     comp_bounds = None
     for comp in glyph.components:
-        base_name = comp.baseGlyph
-        if base_name not in font:
+        full_cb = _get_component_box(font, comp)
+        if full_cb is None:
             continue
-
-        base = font[base_name]
-        base_bounds = base.bounds
-        if base_bounds is None:
-            continue
-
-        t = comp.transformation
-        full_cb = (
-            base_bounds[0] + t[4],
-            base_bounds[1] + t[5],
-            base_bounds[2] + t[4],
-            base_bounds[3] + t[5],
-        )
-
         if comp_bounds is None:
             comp_bounds = full_cb
         else:
@@ -177,26 +214,52 @@ def _has_own_contours(font: Any, glyph: Any) -> bool:
     )
 
 
-def _analyze_glyph(
+def _outermost_components(
     font: Any, glyph: Any
-) -> tuple[dict[str, str] | None, list[RuleIssue]]:
+) -> tuple[int, int] | None:
+    """
+    Indices of the components with the smallest xMin and the largest xMax.
+
+    Ties go to the lower index, so component 0 wins a tie. Components
+    whose base has no outline are ignored.
+    """
+    leftmost: tuple[float, int] | None = None
+    rightmost: tuple[float, int] | None = None
+    for i, comp in enumerate(glyph.components):
+        bounds = _get_component_bounds(font, comp)
+        if bounds is None:
+            continue
+        left, right, _ = bounds
+        if leftmost is None or left < leftmost[0]:
+            leftmost = (left, i)
+        if rightmost is None or right > rightmost[0]:
+            rightmost = (right, i)
+    if leftmost is None or rightmost is None:
+        return None
+    return leftmost[1], rightmost[1]
+
+
+@dataclass
+class _Analysis:
+    rule: dict[str, str] | None
+    issues: list[RuleIssue]
+    skip_reason: str | None = None
+    alternative: dict[str, str] | None = None
+
+
+def _analyze_glyph(font: Any, glyph: Any) -> _Analysis:
     """
     Analyze a single glyph and generate rule + issues.
 
     Args:
-        font: Font object.
+        font: Glyph source.
         glyph: Glyph object to analyze.
 
     Returns:
-        Tuple of (rule_dict, issues_list).
-        rule_dict is None if glyph should be skipped.
+        _Analysis; `rule` is None if the glyph should be skipped.
     """
     issues: list[RuleIssue] = []
     glyph_name = glyph.name
-
-    # Skip glyphs without components
-    if not glyph.components:
-        return None, issues
 
     # Check for mixed contours + components
     if _has_own_contours(font, glyph):
@@ -205,7 +268,7 @@ def _analyze_glyph(
                 glyph_name, [c.baseGlyph for c in glyph.components]
             )
         )
-        return None, issues
+        return _Analysis(None, issues, SKIP_MIXED_CONTOURS)
 
     # Get component 0 (base)
     comp0 = glyph.components[0]
@@ -214,13 +277,13 @@ def _analyze_glyph(
     # Check if base exists
     if base_name not in font:
         issues.append(create_missing_base_warning(glyph_name, base_name))
-        return None, issues
+        return _Analysis(None, issues, SKIP_MISSING_BASE)
 
     # Get base bounds
     base_bounds = _get_component_bounds(font, comp0)
     if base_bounds is None:
         issues.append(create_missing_base_warning(glyph_name, base_name))
-        return None, issues
+        return _Analysis(None, issues, SKIP_MISSING_BASE)
 
     base_left, base_right, base_width = base_bounds
 
@@ -228,10 +291,12 @@ def _analyze_glyph(
     if base_width == 0:
         issues.append(create_zero_width_warning(glyph_name, base_name))
 
+    rule = {"left": f"={base_name}", "right": f"={base_name}"}
+
     # Single component case
     if len(glyph.components) == 1:
         issues.append(create_single_component_info(glyph_name, base_name))
-        return {"left": f"={base_name}", "right": f"={base_name}"}, issues
+        return _Analysis(rule, issues)
 
     # Check other components
     for i, comp in enumerate(glyph.components[1:], 1):
@@ -266,10 +331,22 @@ def _analyze_glyph(
                 )
             )
 
-    # Generate rule based on component 0
-    rule = {"left": f"={base_name}", "right": f"={base_name}"}
+    # Geometric alternative: outermost components govern each side
+    alternative = None
+    outermost = _outermost_components(font, glyph)
+    if outermost is not None and outermost != (0, 0):
+        left_index, right_index = outermost
+        alternative = {
+            "left": f"={glyph.components[left_index].baseGlyph}",
+            "right": f"={glyph.components[right_index].baseGlyph}",
+        }
+        issues.append(
+            create_multi_body_warning(
+                glyph_name, rule, alternative, left_index, right_index
+            )
+        )
 
-    return rule, issues
+    return _Analysis(rule, issues, alternative=alternative)
 
 
 # =============================================================================
@@ -288,10 +365,16 @@ def generate_rules_from_composites(
     Generate metrics rules from composite glyph structure.
 
     Analyzes composite glyphs and generates rules where component 0
-    (index 0) determines both left and right margins.
+    (index 0) determines both left and right margins. Never writes rules.
+
+    For multi-body composites (DZ, f_i, IJ) and overhanging accents, the
+    component with the smallest xMin / largest xMax may not be
+    component 0. Then a geometric alternative is recorded in
+    `result.alternatives` with a W09 issue holding both proposals.
 
     Args:
-        font: Font object with glyphs to analyze.
+        font: Glyph source to analyze: a font or a layer (anything with
+            `name in source`, `source[name]` and iteration or `keys()`).
         glyph_names: Optional list of glyph names to process.
             If None, processes all glyphs.
         include_single_component: Include glyphs with single component.
@@ -302,7 +385,8 @@ def generate_rules_from_composites(
             existing rules.
 
     Returns:
-        RuleGenerationResult with rules, issues, and skipped glyphs.
+        RuleGenerationResult with rules, issues, alternatives, and skipped
+        glyphs with reasons.
 
     Example:
         >>> result = generate_rules_from_composites(font)
@@ -315,7 +399,9 @@ def generate_rules_from_composites(
     if glyph_names is not None:
         glyphs_to_process = [font[name] for name in glyph_names if name in font]
     else:
-        glyphs_to_process = list(font)
+        glyphs_to_process = [
+            font[item] if isinstance(item, str) else item for item in font
+        ]
 
     for glyph in glyphs_to_process:
         glyph_name = glyph.name
@@ -327,27 +413,29 @@ def generate_rules_from_composites(
         # Skip if already has rules
         if skip_existing_rules and rules_manager is not None:
             if rules_manager.has_rule(glyph_name):
-                result.skipped.append(glyph_name)
+                result.skip(glyph_name, SKIP_EXISTING_RULES)
                 continue
 
         # Analyze glyph
-        rule, issues = _analyze_glyph(font, glyph)
+        analysis = _analyze_glyph(font, glyph)
 
         # Add issues
-        result.issues.extend(issues)
+        result.issues.extend(analysis.issues)
 
         # Skip if no rule generated (mixed contours, missing base, etc.)
-        if rule is None:
-            result.skipped.append(glyph_name)
+        if analysis.rule is None:
+            result.skip(glyph_name, analysis.skip_reason or SKIP_MISSING_BASE)
             continue
 
         # Skip single component if not included
         if not include_single_component and len(glyph.components) == 1:
-            result.skipped.append(glyph_name)
+            result.skip(glyph_name, SKIP_SINGLE_COMPONENT)
             continue
 
         # Add rule
-        result.rules[glyph_name] = rule
+        result.rules[glyph_name] = analysis.rule
+        if analysis.alternative is not None:
+            result.alternatives[glyph_name] = analysis.alternative
 
     return result
 

@@ -42,7 +42,7 @@ Author:
     Alexander Lubovenko (typedev)
 """
 
-__version__ = "0.4.3"
+__version__ = "0.5.0"
 __author__ = "Alexander Lubovenko"
 
 # Core components
@@ -102,6 +102,23 @@ from .margins_utils import (
     set_angled_right_margin,
 )
 
+# Margin planner
+from .planner import (
+    GlyphChange,
+    MarginReader,
+    OutOfSync,
+    Plan,
+    RulesStatus,
+    angled_margins,
+    apply_plan,
+    build_reverse_component_map,
+    check_rules,
+    component_shift,
+    plan_margin_edit,
+    plan_sync,
+    upright_margins,
+)
+
 # Metrics rules
 from .rules_core import (
     # Issue codes
@@ -109,11 +126,15 @@ from .rules_core import (
     E_PARSE_ERROR,
     I_SINGLE_COMPONENT,
     W_COMPONENT_WIDER,
+    W_EMPTY_GLYPH,
+    W_EVALUATION_FAILED,
     W_EXTENDS_LEFT,
     W_EXTENDS_RIGHT,
     W_MISSING_BASE,
     W_MISSING_GLYPH,
     W_MIXED_CONTOURS,
+    W_MULTI_BODY,
+    W_RULE_OVERRIDDEN,
     W_SELF_REFERENCE,
     W_ZERO_WIDTH,
     RuleIssue,
@@ -184,7 +205,25 @@ __all__ = [
     "W_ZERO_WIDTH",
     "W_MIXED_CONTOURS",
     "W_MISSING_BASE",
+    "W_MULTI_BODY",
+    "W_RULE_OVERRIDDEN",
+    "W_EMPTY_GLYPH",
+    "W_EVALUATION_FAILED",
     "I_SINGLE_COMPONENT",
+    # Planner
+    "plan_margin_edit",
+    "plan_sync",
+    "check_rules",
+    "apply_plan",
+    "Plan",
+    "GlyphChange",
+    "RulesStatus",
+    "OutOfSync",
+    "MarginReader",
+    "upright_margins",
+    "angled_margins",
+    "component_shift",
+    "build_reverse_component_map",
     # Rules Generator
     "generate_rules_from_composites",
     "RuleGenerationResult",

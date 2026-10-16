@@ -282,12 +282,7 @@ class TestMarginsEditorBasic(unittest.TestCase):
         """MarginsEditor works like KerningEditor."""
         original_margin = self.font['A'].leftMargin
 
-        cmd = AdjustMarginCommand(
-            glyph_name='A',
-            side='left',
-            delta=10,
-            propagate_to_composites=False
-        )
+        cmd = AdjustMarginCommand(glyph_name='A', side='left', delta=10)
         self.editor.execute(cmd, self.context)
 
         self.assertEqual(self.font['A'].leftMargin, original_margin + 10)

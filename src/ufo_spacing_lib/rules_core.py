@@ -31,6 +31,10 @@ W_EXTENDS_RIGHT = "W05"
 W_ZERO_WIDTH = "W06"
 W_MIXED_CONTOURS = "W07"
 W_MISSING_BASE = "W08"
+W_MULTI_BODY = "W09"
+W_RULE_OVERRIDDEN = "W10"
+W_EMPTY_GLYPH = "W11"
+W_EVALUATION_FAILED = "W12"
 
 # Info codes
 I_SINGLE_COMPONENT = "I01"
@@ -47,6 +51,10 @@ ISSUE_MESSAGES = {
     W_ZERO_WIDTH: "Base component has zero width",
     W_MIXED_CONTOURS: "Glyph has both contours and components",
     W_MISSING_BASE: "Base component does not exist",
+    W_MULTI_BODY: "Outermost components differ from component 0",
+    W_RULE_OVERRIDDEN: "Edit overrides rule {rule}",
+    W_EMPTY_GLYPH: "{role} glyph {name} has no outline",
+    W_EVALUATION_FAILED: "Rule cannot be evaluated: {error}",
     I_SINGLE_COMPONENT: "Single component",
 }
 
@@ -264,6 +272,82 @@ def create_single_component_info(glyph: str, base: str) -> RuleIssue:
     )
 
 
+def create_multi_body_warning(
+    glyph: str,
+    default: dict[str, str],
+    geometric: dict[str, str],
+    left_component: int,
+    right_component: int,
+) -> RuleIssue:
+    """Create a multi-body candidate warning.
+
+    Raised when the component with the smallest xMin or the largest xMax
+    is not component 0. Both proposals are included so a UI can offer a
+    choice per side.
+    """
+    return RuleIssue(
+        glyph=glyph,
+        code=W_MULTI_BODY,
+        message=ISSUE_MESSAGES[W_MULTI_BODY],
+        severity=SEVERITY_WARNING,
+        details={
+            "default": dict(default),
+            "geometric": dict(geometric),
+            "left_component": left_component,
+            "right_component": right_component,
+        },
+    )
+
+
+def create_rule_overridden_warning(
+    glyph: str, side: str, rule: str, expected: float | None, actual: float
+) -> RuleIssue:
+    """Create a warning for a direct edit that overrides the glyph's rule."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_RULE_OVERRIDDEN,
+        message=ISSUE_MESSAGES[W_RULE_OVERRIDDEN].format(rule=rule),
+        severity=SEVERITY_WARNING,
+        details={"side": side, "rule": rule, "expected": expected, "actual": actual},
+    )
+
+
+def create_empty_glyph_warning(
+    glyph: str, side: str, rule: str | None, name: str, role: str
+) -> RuleIssue:
+    """Create a warning for a glyph without outline in a margin operation.
+
+    Args:
+        glyph: Glyph the operation was for.
+        side: Side of the operation.
+        rule: Rule text, or None for a direct edit.
+        name: The glyph that has no outline.
+        role: "target" or "source".
+    """
+    return RuleIssue(
+        glyph=glyph,
+        code=W_EMPTY_GLYPH,
+        message=ISSUE_MESSAGES[W_EMPTY_GLYPH].format(
+            role=role.capitalize(), name=name
+        ),
+        severity=SEVERITY_WARNING,
+        details={"side": side, "rule": rule, "name": name, "role": role},
+    )
+
+
+def create_evaluation_failed_warning(
+    glyph: str, side: str, rule: str, error: str
+) -> RuleIssue:
+    """Create a warning for a rule that parses but cannot be evaluated."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_EVALUATION_FAILED,
+        message=ISSUE_MESSAGES[W_EVALUATION_FAILED].format(error=error),
+        severity=SEVERITY_WARNING,
+        details={"side": side, "rule": rule, "error": error},
+    )
+
+
 # =============================================================================
 # Parsed Rule
 # =============================================================================
@@ -295,6 +379,34 @@ class ParsedRule:
     operator: str | None = None
     operand: float | None = None
     is_symmetry: bool = False
+
+    def source_side_for(self, target_side: str) -> str:
+        """Side of the source glyph this rule reads for ``target_side``."""
+        opposite = "right" if target_side == "left" else "left"
+        if self.is_symmetry or self.source_side == "opposite":
+            return opposite
+        return target_side
+
+    def apply(self, value: float) -> float | None:
+        """
+        Apply the rule's arithmetic to a source margin, without rounding.
+
+        Returns:
+            The computed margin, or None for a division by zero.
+        """
+        if self.operator is None or self.operand is None:
+            return value
+        if self.operator == "+":
+            return value + self.operand
+        if self.operator == "-":
+            return value - self.operand
+        if self.operator == "*":
+            return value * self.operand
+        if self.operator == "/":
+            if self.operand == 0:
+                return None
+            return value / self.operand
+        return value
 
 
 # =============================================================================

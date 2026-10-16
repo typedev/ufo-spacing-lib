@@ -74,12 +74,12 @@ from ufo_spacing_lib import (
 editor = MarginsEditor()
 context = FontContext.from_single_font(font)
 
-# Adjust left margin (propagates to composites by default)
+# Adjust left margin (composites built on A stay in place;
+# they follow A only through metrics rules)
 cmd = AdjustMarginCommand(
     glyph_name='A',
     side='left',
     delta=10,
-    propagate_to_composites=True
 )
 editor.execute(cmd, context)
 
@@ -404,6 +404,46 @@ sync_cmd = SyncRulesCommand()
 editor.execute(sync_cmd, context)
 ```
 
+### Margin Planner
+
+A pure planner for applications that keep their own undo. It returns every
+change an edit implies, without touching the font, and works on any glyph
+source (a font or a layer: `name in source` and `source[name]`).
+
+```python
+from ufo_spacing_lib import apply_plan, check_rules, plan_margin_edit, plan_sync
+
+rules = {"Aacute": {"left": "=A", "right": "=A"}}  # or a MetricsRulesManager
+
+plan = plan_margin_edit(layer, "A", "left", delta=10, rules=rules)
+plan.names      # every glyph to snapshot before applying
+plan.changes    # GlyphChange per glyph: shift, width_delta, component_offsets, reasons
+plan.issues     # RuleIssue list; planning never raises for rule problems
+
+apply_plan(layer, plan)
+apply_plan(layer, plan.inverted())  # exact undo
+
+# Bring ruled glyphs in line, and report glyphs out of sync
+apply_plan(layer, plan_sync(layer, rules))
+status = check_rules(layer, rules)
+for entry in status.out_of_sync:
+    print(entry.glyph, entry.side, entry.rule, entry.expected, entry.actual)
+```
+
+How an edit cascades:
+
+1. Composites that use a glyph whose contents shift get the opposite offset
+   on that component, so they stay pixel-for-pixel in place. This is
+   transform-aware: a mirrored component gets `+d`, a rotated one gets a
+   vertical correction.
+2. Rules then run in dependency order. A left-side rule shifts the glyph's
+   whole contents and its advance, and that shift is itself compensated in the
+   composites built on it. A right-side rule changes the advance only.
+
+Pass `margins=angled_margins(source, italic_angle)` (or your own
+`(glyph, side) -> float | None`) to read and target angled margins. Rule results
+are not rounded unless `round_values=True`.
+
 ### Generate Rules from Composites
 
 ```python
@@ -427,6 +467,11 @@ infos = result.infos        # Only info messages
 
 # Single component info
 single = result.get_issues_by_code(I_SINGLE_COMPONENT)
+
+# Multi-body composites (DZ, f_i) and overhanging accents: a geometric
+# proposal from the outermost components, offered next to the default
+result.alternatives   # {"DZ": {"left": "=D", "right": "=Z"}}
+result.skip_reasons   # {"Abar": "mixed_contours"}
 ```
 
 ### Issue Codes
@@ -443,6 +488,10 @@ single = result.get_issues_by_code(I_SINGLE_COMPONENT)
 | `W06` | Warning | Base component has zero width |
 | `W07` | Warning | Mixed contours and components |
 | `W08` | Warning | Base component does not exist |
+| `W09` | Warning | Outermost components differ from component 0 (multi-body candidate) |
+| `W10` | Warning | A direct edit overrides the glyph's own rule |
+| `W11` | Warning | Glyph has no outline (edit or rule target/source) |
+| `W12` | Warning | Rule cannot be evaluated (division by zero) |
 | `I01` | Info | Single component composite |
 
 ---
@@ -496,7 +545,7 @@ single = result.get_issues_by_code(I_SINGLE_COMPONENT)
 | Command | Parameters | Description |
 |---------|------------|-------------|
 | `SetMarginCommand` | `glyph_name`, `side`, `value`, `apply_rules=True` | Set margin to absolute value |
-| `AdjustMarginCommand` | `glyph_name`, `side`, `delta`, `propagate_to_composites=True`, `apply_rules=True` | Adjust margin by delta |
+| `AdjustMarginCommand` | `glyph_name`, `side`, `delta`, `apply_rules=True` | Adjust margin by delta |
 
 #### Rules Commands
 

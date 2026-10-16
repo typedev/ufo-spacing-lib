@@ -364,7 +364,8 @@ class TestSpacingEditorAffectedGlyphsPreview:
 
         assert affected == set()
 
-    def test_respects_propagate_false(self):
+    def test_propagate_false_is_deprecated_no_op(self):
+        """Since 0.5.0 composites are always compensated."""
         from ufo_spacing_lib import AdjustMarginCommand
 
         font = MockFont(["A", "Aacute"])
@@ -372,11 +373,25 @@ class TestSpacingEditorAffectedGlyphsPreview:
 
         editor = SpacingEditor(font)
 
-        cmd = AdjustMarginCommand("A", "left", 10, propagate_to_composites=False)
+        with pytest.deprecated_call():
+            cmd = AdjustMarginCommand("A", "left", 10, propagate_to_composites=False)
         affected = editor.get_affected_glyphs_preview(cmd)
 
-        assert "A" in affected
-        assert "Aacute" not in affected
+        assert affected == {"A", "Aacute"}
+
+    def test_preview_matches_execute(self):
+        from ufo_spacing_lib import AdjustMarginCommand
+
+        font = MockFont(["A", "Aacute", "H"])
+        font.add_composite("Aacute", "A")
+        editor = SpacingEditor(font)
+        editor.get_rules_manager().set_rule("H", "left", "=A")
+
+        cmd = AdjustMarginCommand("A", "left", 10)
+        affected = editor.get_affected_glyphs_preview(cmd)
+        result = editor.execute(cmd)
+
+        assert affected == set(result.affected_glyphs) == {"A", "Aacute", "H"}
 
     def test_respects_apply_rules_false(self):
         from ufo_spacing_lib import AdjustMarginCommand
