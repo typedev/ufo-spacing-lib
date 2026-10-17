@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-17
+
+### Fixed
+- A broken `"width"` rule side was dropped by `get_broken()` and therefore by
+  `to_lib_value()` / `save()`, which wrote an empty list instead
+  (`"broken": {"B": []}`). Broken sides are now listed in `"left"`, `"right"`,
+  `"width"` order, and a glyph never maps to an empty list.
+
 ## [0.7.0] - 2026-10-17
 
 ### Added

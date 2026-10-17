@@ -350,13 +350,15 @@ class MetricsRulesManager:
         Get all broken rule sides.
 
         Returns:
-            {glyph: [sides]}, sides in "left", "right" order.
+            {glyph: [sides]}, sides in "left", "right", "width" order.
+            A glyph never maps to an empty list.
         """
-        return {
-            glyph: [side for side in ("left", "right") if side in sides]
-            for glyph, sides in sorted(self._broken.items())
-            if sides
-        }
+        result = {}
+        for glyph, sides in sorted(self._broken.items()):
+            ordered = [side for side in _RULE_SIDES if side in sides]
+            if ordered:
+                result[glyph] = ordered
+        return result
 
     def mark_broken(self, glyph: str, side: str) -> bool:
         """
@@ -364,7 +366,7 @@ class MetricsRulesManager:
 
         Args:
             glyph: Glyph name.
-            side: "left", "right", or "both".
+            side: "left", "right", "width", or "both" (left and right).
 
         Returns:
             True if any side was newly marked. Sides without a rule are
@@ -388,7 +390,7 @@ class MetricsRulesManager:
 
         Args:
             glyph: Glyph name.
-            side: "left", "right", or "both".
+            side: "left", "right", "width", or "both" (left and right).
 
         Returns:
             True if any side was broken.
@@ -452,7 +454,7 @@ class MetricsRulesManager:
 
         Args:
             glyph: Glyph name.
-            side: "left", "right", or "both".
+            side: "left", "right", "width", or "both" (left and right).
 
         Returns:
             The removed rule string, or None if no rule existed.
@@ -812,6 +814,10 @@ def _coerce_broken(
         if kept:
             result[glyph] = kept
     return result
+
+
+# Rule sides in storage and evaluation order
+_RULE_SIDES = ("left", "right", "width")
 
 
 def _expand_side(side: str) -> tuple[str, ...]:

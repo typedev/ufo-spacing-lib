@@ -243,3 +243,53 @@ class TestGeneratorAndCommands:
         assert m.get_broken() == {}
         command.undo(context, managers)
         assert m.get_broken() == {"Aacute": ["right"]}
+
+
+class TestBrokenWidth:
+    """0.7.0 lost a broken "width" side on serialization."""
+
+    def test_to_lib_value_keeps_width(self):
+        m = MetricsRulesManager.from_rules({"version": 1, "rules": {"B": {"width": "=A"}}})
+        assert m.mark_broken("B", "width")
+        assert m.to_lib_value()["broken"] == {"B": ["width"]}
+
+    def test_side_order_and_no_empty_lists(self):
+        m = MetricsRulesManager.from_rules(
+            {"B": {"left": "=A", "right": "=A", "width": "=A"}, "C": {"width": "=A"}}
+        )
+        m.mark_broken("B", "width")
+        m.mark_broken("B", "left")
+        m.mark_broken("C", "width")
+        m.restore_rule("C", "width")
+        assert m.get_broken() == {"B": ["left", "width"]}
+        assert all(m.to_lib_value()["broken"].values())
+
+    def test_round_trip_through_font_lib(self):
+        font = MockFont(["A", "B"])
+        m = MetricsRulesManager(font)
+        m.set_rule("B", "width", "=A")
+        m.mark_broken("B", "width")
+        assert font.lib[METRICS_RULES_LIB_KEY]["broken"] == {"B": ["width"]}
+        assert MetricsRulesManager(font).is_broken("B", "width")
+
+    def test_width_edit_break_survives_save(self):
+        s = accent_font()
+        m = manager(s, {"Aacute": {"width": "=A"}})
+        plan = plan_margin_edit(s, "Aacute", "width", delta=D, rules=m)
+        assert plan.breaks == [("Aacute", "width")]
+        apply_plan(s, plan)
+        for glyph, side in plan.breaks:
+            m.mark_broken(glyph, side)
+        reloaded = MetricsRulesManager.from_rules(m.to_lib_value(), s)
+        assert reloaded.is_broken("Aacute", "width")
+        # The break holds: editing A does not re-fire the width rule
+        later = plan_margin_edit(s, "A", "right", delta=D, rules=reloaded)
+        assert "Aacute" not in later.names
+
+    def test_check_rules_lists_broken_width(self):
+        s = accent_font()
+        m = manager(s, {"Aacute": {"width": "=H"}}, broken={"Aacute": ["width"]})
+        status = check_rules(s, m)
+        assert status.out_of_sync == []
+        [entry] = status.broken
+        assert (entry.side, entry.expected, entry.actual) == ("width", 700, 600)
