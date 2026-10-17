@@ -60,6 +60,8 @@ class SetMetricsRuleCommand(Command):
         self.rule = rule
         # Previous rules per font for undo: {font_id: {side: rule} | None}
         self._previous_rules: dict[int, dict[str, str] | None] = {}
+        # Previously broken sides per font for undo: {font_id: [side]}
+        self._previous_broken: dict[int, list[str]] = {}
 
     @property
     def description(self) -> str:
@@ -95,6 +97,9 @@ class SetMetricsRuleCommand(Command):
             # Save previous state for undo
             self._previous_rules[font_id] = manager.get_rules_for_glyph(
                 self.glyph
+            )
+            self._previous_broken[font_id] = manager.get_broken().get(
+                self.glyph, []
             )
 
             # Set new rule
@@ -142,6 +147,8 @@ class SetMetricsRuleCommand(Command):
             if previous:
                 for side, rule in previous.items():
                     manager.set_rule(self.glyph, side, rule)
+            for side in self._previous_broken.get(font_id, []):
+                manager.mark_broken(self.glyph, side)
 
         return CommandResult.ok(f"Restored rules for {self.glyph}")
 
@@ -177,6 +184,8 @@ class RemoveMetricsRuleCommand(Command):
         self.side = side
         # Previous rules per font for undo
         self._previous_rules: dict[int, dict[str, str] | None] = {}
+        # Previously broken sides per font for undo: {font_id: [side]}
+        self._previous_broken: dict[int, list[str]] = {}
 
     @property
     def description(self) -> str:
@@ -212,6 +221,9 @@ class RemoveMetricsRuleCommand(Command):
             # Save previous state for undo
             self._previous_rules[font_id] = manager.get_rules_for_glyph(
                 self.glyph
+            )
+            self._previous_broken[font_id] = manager.get_broken().get(
+                self.glyph, []
             )
 
             # Remove rule(s)
@@ -252,6 +264,8 @@ class RemoveMetricsRuleCommand(Command):
             if previous:
                 for side, rule in previous.items():
                     manager.set_rule(self.glyph, side, rule)
+            for side in self._previous_broken.get(font_id, []):
+                manager.mark_broken(self.glyph, side)
 
         return CommandResult.ok(f"Restored rules for {self.glyph}")
 

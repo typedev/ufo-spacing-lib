@@ -88,10 +88,12 @@ The library uses the Command pattern for all font modifications:
 - A rule side runs only when the margin it reads changed in the plan; `plan_sync` forces its targets. The edited glyph is not re-ruled on the edited side (W10 issue)
 - `GlyphChange`: one merged change per glyph (`shift`, `width_delta` incl. the shift, `component_offsets`, `reasons`); `Plan.changes` in first-touch order, edited glyph first
 - Rule results are not rounded unless `round_values=True`
+- Broken (dormant) rule sides are skipped everywhere except `plan_restore`; `Plan.breaks` lists sides an edit breaks (the caller marks them); `check_rules` puts them in `status.broken`
 
 **MetricsRulesManager** (`rules_manager.py`): Metrics keys system
 - Manages linked sidebearings with automatic cascade updates
 - Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
+- Broken flags: `"broken": {glyph: [sides]}` next to `"rules"` in the lib value; `mark_broken()`, `restore_rule()`, `is_broken()`, `get_broken()`; `set_rule()`/`remove_rule()` clear the flag
 - `MetricsRulesManager.from_rules(rules, source)` builds a detached manager from a dict on any glyph source (no autosave); `MetricsRulesManager(font)` loads from and autosaves to `font.lib`
 - Supported syntax: `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=H|` (opposite side)
 - Validation via `manager.validate()` returns `ValidationReport` with unified `RuleIssue` list

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-16
+
+### Added
+- Broken (dormant) metrics rules: a rule side can be marked broken. Its text
+  is kept, but it is not applied until it is restored.
+  - Stored as a top-level `"broken": {glyph: [sides]}` key next to `"rules"`
+    in the lib value. The key is written only when something is broken, and
+    0.5 readers ignore it.
+  - `MetricsRulesManager.mark_broken()`, `restore_rule()`, `is_broken()`,
+    `get_broken()` and `to_lib_value()`. `set_rule()`, `remove_rule()` and the
+    clear methods drop the flag for the sides they touch.
+  - `plan_margin_edit`, `plan_sync` and the cascade skip broken sides. Glyphs
+    whose rules read a broken glyph read its actual margins.
+  - `Plan.breaks`: the `(glyph, side)` pairs a direct edit breaks (an active
+    rule on the edited side, also reported as W10). The planner never records
+    them.
+  - `plan_restore(source, rules, glyph, side)`: re-rules one side and its
+    dependents, even while that side is still marked broken.
+  - `check_rules` lists broken sides in `RulesStatus.broken` (`BrokenRule`,
+    with the value the rule would give now) and never in `out_of_sync`.
+  - Generator: with `skip_existing_rules`, glyphs with broken rules are skipped
+    with reason `"broken_rules"`.
+
+### Changed
+- W10 is emitted only for an active rule. Editing an already broken side gives
+  no issue.
+- `SetMetricsRuleCommand` and `RemoveMetricsRuleCommand` undo also restore the
+  broken flags.
+
 ## [0.5.0] - 2026-10-16
 
 ### Added

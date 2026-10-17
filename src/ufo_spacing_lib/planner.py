@@ -148,10 +148,15 @@ class Plan:
         issues: Rule issues met while planning (cycles, missing or empty
             glyphs, an edit overriding a rule, ...). Planning never raises
             for these.
+        breaks: ``(glyph, side)`` rule sides this edit breaks: a direct
+            edit on a side governed by an active rule (each also has a W10
+            issue). The planner never records them; the caller marks them
+            with `MetricsRulesManager.mark_broken` after applying the plan.
     """
 
     changes: list[GlyphChange] = field(default_factory=list)
     issues: list[RuleIssue] = field(default_factory=list)
+    breaks: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def names(self) -> set[str]:
@@ -171,7 +176,7 @@ class Plan:
         return None
 
     def inverted(self) -> Plan:
-        """A plan that undoes this one when applied after it."""
+        """A plan that undoes this one when applied after it (breaks nothing)."""
         return Plan(
             changes=[change.inverted() for change in reversed(self.changes)],
             issues=list(self.issues),
@@ -197,18 +202,36 @@ class OutOfSync(NamedTuple):
     actual: float
 
 
+class BrokenRule(NamedTuple):
+    """
+    A broken (dormant) rule side.
+
+    `expected` is what the rule would give now (None if it cannot be
+    evaluated); `actual` is the current margin (None without outline).
+    """
+
+    glyph: str
+    side: str
+    rule: str
+    expected: float | None
+    actual: float | None
+
+
 @dataclass
 class RulesStatus:
     """
     Result of `check_rules`.
 
     Attributes:
-        out_of_sync: Glyph sides whose margin differs from their rule.
+        out_of_sync: Active rule sides whose margin differs from their rule.
+        broken: Broken rule sides, whether or not they hold. Never in
+            `out_of_sync`.
         issues: Validation issues (cycles, parse errors, missing glyphs)
             plus evaluation issues (empty glyphs, division by zero).
     """
 
     out_of_sync: list[OutOfSync] = field(default_factory=list)
+    broken: list[BrokenRule] = field(default_factory=list)
     issues: list[RuleIssue] = field(default_factory=list)
 
     @property
@@ -431,6 +454,7 @@ class _Planner:
         self.round_values = round_values
         self.changes: dict[str, GlyphChange] = {}
         self.issues: list[RuleIssue] = []
+        self.breaks: list[tuple[str, str]] = []
         self._original: dict[tuple[str, str], float | None] = {}
 
     # -- state ---------------------------------------------------------------
@@ -585,15 +609,15 @@ class _Planner:
     def cascade(
         self,
         nodes: set[str],
-        forced: set[str],
+        forced: set[tuple[str, str]],
         skip: set[tuple[str, str]],
     ) -> None:
         """
         Run the rules of `nodes` in dependency order.
 
-        A rule side runs when its glyph is in `forced` or when the margin it
-        reads has changed in this plan. Glyphs caught in a cycle are skipped
-        with one E02 issue per cycle.
+        A rule side runs when it is in `forced` or when the margin it reads
+        has changed in this plan. Broken sides never run unless forced.
+        Glyphs caught in a cycle are skipped with one E02 issue per cycle.
         """
         assert self.manager is not None
         for component in _ordered_components(nodes, self.manager):
@@ -604,13 +628,16 @@ class _Planner:
             for side, parsed in self.rule_sides(glyph):
                 if (glyph, side) in skip:
                     continue
-                source = _rule_source(glyph, side, parsed)
-                if glyph in forced or self.side_changed(*source):
+                if (glyph, side) in forced:
+                    self.apply_rule(glyph, side)
+                elif self.manager.is_broken(glyph, side):
+                    continue
+                elif self.side_changed(*_rule_source(glyph, side, parsed)):
                     self.apply_rule(glyph, side)
 
     def plan(self) -> Plan:
         changes = [c for c in self.changes.values() if not c.is_noop]
-        return Plan(changes=changes, issues=self.issues)
+        return Plan(changes=changes, issues=self.issues, breaks=self.breaks)
 
 
 # =============================================================================
@@ -656,9 +683,12 @@ def plan_margin_edit(
 
     Notes:
         - The edited glyph is not re-ruled: the edit wins over its own rule
-          on the edited side, and the plan carries a W10 issue. Its other
-          side is re-evaluated only when that rule reads the glyph itself
-          (``=|``). Its dependents cascade as usual.
+          on the edited side. If that rule is active, the plan carries a
+          W10 issue and lists the side in `plan.breaks`; an already broken
+          side gives neither. Its other side is re-evaluated only when that
+          rule reads the glyph itself (``=|``). Its dependents cascade as
+          usual and read its new margin.
+        - Broken rule sides are never evaluated.
         - A glyph without outline has no margin: a delta edit changes its
           width only, a value edit gives a W11 issue and no change.
     """
@@ -693,7 +723,12 @@ def plan_margin_edit(
         return planner.plan()
 
     own_rule = manager.get_rule(glyph_name, side)
-    if own_rule is not None and manager.get_parsed_rule(glyph_name, side) is not None:
+    if (
+        own_rule is not None
+        and manager.get_parsed_rule(glyph_name, side) is not None
+        and not manager.is_broken(glyph_name, side)
+    ):
+        planner.breaks.append((glyph_name, side))
         planner.issues.append(
             create_rule_overridden_warning(
                 glyph_name,
@@ -707,6 +742,46 @@ def plan_margin_edit(
     nodes = manager.get_affected_glyphs(glyph_name)
     nodes.add(glyph_name)
     planner.cascade(nodes, forced=set(), skip={(glyph_name, side)})
+    return planner.plan()
+
+
+def plan_restore(
+    source: Any,
+    rules: dict | MetricsRulesManager,
+    glyph_name: str,
+    side: str,
+    *,
+    reverse_map: dict[str, list[str]] | None = None,
+    margins: MarginReader | None = None,
+    round_values: bool = False,
+) -> Plan:
+    """
+    Plan bringing one rule side back in line, e.g. after restoring it.
+
+    Only that side is re-ruled (unlike ``plan_sync(names=[glyph])``, which
+    would also sync the glyph's other side); its dependents cascade. The
+    side is evaluated even if it is still marked broken, so the caller may
+    call `MetricsRulesManager.restore_rule` before or after planning.
+
+    Args:
+        source: Glyph source.
+        rules: Rules dict or MetricsRulesManager.
+        glyph_name: Glyph whose rule to restore.
+        side: "left", "right", or "both".
+        reverse_map: Cached ``{base: [composites]}``.
+        margins: Margin reader.
+        round_values: Round rule results to integers.
+    """
+    if side != "both":
+        _check_side(side)
+    manager = _as_manager(rules, source)
+    assert manager is not None
+    planner = _Planner(source, manager, reverse_map, margins, round_values)
+    sides = _SIDES if side == "both" else (side,)
+    forced = {(glyph_name, one) for one in sides if manager.has_rule(glyph_name, one)}
+    if forced:
+        nodes = manager.get_affected_glyphs(glyph_name) | {glyph_name}
+        planner.cascade(nodes, forced=forced, skip=set())
     return planner.plan()
 
 
@@ -733,7 +808,8 @@ def plan_sync(
         round_values: Round rule results to integers.
 
     Returns:
-        Plan in dependency order.
+        Plan in dependency order. Broken rule sides are left alone; restore
+        them with `plan_restore`.
     """
     manager = _as_manager(rules, source)
     assert manager is not None
@@ -744,7 +820,13 @@ def plan_sync(
     nodes = set(targets)
     for name in targets:
         nodes |= manager.get_affected_glyphs(name)
-    planner.cascade(nodes, forced=targets, skip=set())
+    forced = {
+        (glyph, side)
+        for glyph in targets
+        for side in _SIDES
+        if manager.has_rule(glyph, side) and not manager.is_broken(glyph, side)
+    }
+    planner.cascade(nodes, forced=forced, skip=set())
     return planner.plan()
 
 
@@ -769,7 +851,8 @@ def check_rules(
         tolerance: Largest difference still counted as in sync.
 
     Returns:
-        RulesStatus with out-of-sync entries and issues. Validation issues
+        RulesStatus with out-of-sync entries, broken sides (with what
+        the rule would give now) and issues. Validation issues
         (cycles, parse errors, missing glyphs) are included for the whole
         rule set when `names` is None, else for the checked glyphs.
     """
@@ -795,6 +878,9 @@ def check_rules(
                 continue
             expected = planner.evaluate(glyph, side)
             actual = planner.margin(glyph, side)
+            if manager.is_broken(glyph, side):
+                status.broken.append(BrokenRule(glyph, side, rule, expected, actual))
+                continue
             if expected is None:
                 continue
             if actual is None:

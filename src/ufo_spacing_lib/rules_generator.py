@@ -34,6 +34,7 @@ from .rules_core import (
 
 # Skip reasons (RuleGenerationResult.skip_reasons values)
 SKIP_EXISTING_RULES = "existing_rules"
+SKIP_BROKEN_RULES = "broken_rules"
 SKIP_MIXED_CONTOURS = "mixed_contours"
 SKIP_MISSING_BASE = "missing_base"
 SKIP_SINGLE_COMPONENT = "single_component_excluded"
@@ -55,7 +56,8 @@ class RuleGenerationResult:
         skipped: List of glyph names that were skipped.
         skip_reasons: Why each skipped glyph was skipped:
             {"Abar": "mixed_contours"}. One of SKIP_EXISTING_RULES,
-            SKIP_MIXED_CONTOURS, SKIP_MISSING_BASE, SKIP_SINGLE_COMPONENT.
+            SKIP_BROKEN_RULES, SKIP_MIXED_CONTOURS, SKIP_MISSING_BASE,
+            SKIP_SINGLE_COMPONENT.
         alternatives: Geometric proposals for multi-body candidates:
             left from the component with the smallest xMin, right from the
             one with the largest xMax. Only present when it differs from
@@ -379,8 +381,9 @@ def generate_rules_from_composites(
             If None, processes all glyphs.
         include_single_component: Include glyphs with single component.
             Default True.
-        skip_existing_rules: Skip glyphs that already have rules.
-            Requires rules_manager. Default False.
+        skip_existing_rules: Skip glyphs that already have rules,
+            including broken (dormant) ones. Requires rules_manager.
+            Default False.
         rules_manager: Optional MetricsRulesManager for checking
             existing rules.
 
@@ -413,7 +416,12 @@ def generate_rules_from_composites(
         # Skip if already has rules
         if skip_existing_rules and rules_manager is not None:
             if rules_manager.has_rule(glyph_name):
-                result.skip(glyph_name, SKIP_EXISTING_RULES)
+                # A broken rule is kept, so it counts as an existing rule
+                is_broken = getattr(rules_manager, "is_broken", None)
+                if callable(is_broken) and is_broken(glyph_name):
+                    result.skip(glyph_name, SKIP_BROKEN_RULES)
+                else:
+                    result.skip(glyph_name, SKIP_EXISTING_RULES)
                 continue
 
         # Analyze glyph

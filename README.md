@@ -440,6 +440,13 @@ How an edit cascades:
    whole contents and its advance, and that shift is itself compensated in the
    composites built on it. A right-side rule changes the advance only.
 
+Broken (dormant) rules: an edit on a ruled side reports the side in
+`plan.breaks`. Mark it with `manager.mark_broken(glyph, side)` and the rule
+stays dormant: planner, sync and cascade skip it, and `check_rules` lists it
+in `status.broken`. To bring it back, call `manager.restore_rule(glyph, side)`,
+then apply `plan_restore(source, manager, glyph, side)`. Flags are stored next
+to the rules as `"broken": {glyph: [sides]}`.
+
 Pass `margins=angled_margins(source, italic_angle)` (or your own
 `(glyph, side) -> float | None`) to read and target angled margins. Rule results
 are not rounded unless `round_values=True`.

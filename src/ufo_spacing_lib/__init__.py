@@ -42,7 +42,7 @@ Author:
     Alexander Lubovenko (typedev)
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __author__ = "Alexander Lubovenko"
 
 # Core components
@@ -104,6 +104,7 @@ from .margins_utils import (
 
 # Margin planner
 from .planner import (
+    BrokenRule,
     GlyphChange,
     MarginReader,
     OutOfSync,
@@ -115,6 +116,7 @@ from .planner import (
     check_rules,
     component_shift,
     plan_margin_edit,
+    plan_restore,
     plan_sync,
     upright_margins,
 )
@@ -213,12 +215,14 @@ __all__ = [
     # Planner
     "plan_margin_edit",
     "plan_sync",
+    "plan_restore",
     "check_rules",
     "apply_plan",
     "Plan",
     "GlyphChange",
     "RulesStatus",
     "OutOfSync",
+    "BrokenRule",
     "MarginReader",
     "upright_margins",
     "angled_margins",

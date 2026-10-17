@@ -99,6 +99,9 @@ class MetricsRulesManager:
         # Raw rules: {glyph: {side: rule_string}}
         self._rules: dict[str, dict[str, str]] = {}
 
+        # Broken (dormant) rule sides: {glyph: {side}}
+        self._broken: dict[str, set[str]] = {}
+
         # Parsed rules cache: {glyph: {side: ParsedRule}}
         self._parsed_cache: dict[str, dict[str, ParsedRule]] = {}
 
@@ -107,6 +110,7 @@ class MetricsRulesManager:
 
         if rules is not None:
             self._rules = _coerce_rules(rules)
+            self._broken = _coerce_broken(rules, self._rules)
         else:
             # Load existing rules from font
             self._load_from_font()
@@ -156,18 +160,34 @@ class MetricsRulesManager:
             return
 
         self._rules = _coerce_rules(data)
+        self._broken = _coerce_broken(data, self._rules)
+
+    def to_lib_value(self) -> dict[str, Any]:
+        """
+        The value stored under the lib key.
+
+        Returns:
+            {"version": 1, "rules": {glyph: {side: rule}}} plus
+            "broken": {glyph: [sides]} when any rule side is broken.
+            0.5 readers take only "rules" and ignore "broken".
+        """
+        value: dict[str, Any] = {
+            "version": METRICS_RULES_VERSION,
+            "rules": {
+                glyph: dict(sides) for glyph, sides in self._rules.items()
+            },
+        }
+        broken = self.get_broken()
+        if broken:
+            value["broken"] = broken
+        return value
 
     def save(self) -> None:
         """Save rules to `font.lib` (no-op without a font)."""
         if self._font is None or not hasattr(self._font, "lib"):
             return
 
-        self._font.lib[METRICS_RULES_LIB_KEY] = {
-            "version": METRICS_RULES_VERSION,
-            "rules": {
-                glyph: dict(sides) for glyph, sides in self._rules.items()
-            },
-        }
+        self._font.lib[METRICS_RULES_LIB_KEY] = self.to_lib_value()
 
     def _save_to_font(self) -> None:
         """Save after a modification when autosave is on."""
@@ -301,6 +321,92 @@ class MetricsRulesManager:
         return side in self._rules[glyph]
 
     # =========================================================================
+    # Broken (dormant) rules
+    # =========================================================================
+
+    def is_broken(self, glyph: str, side: str | None = None) -> bool:
+        """
+        Check if a rule side is broken (kept but dormant).
+
+        A broken rule is not applied by the planner, sync or cascade until
+        it is restored with `restore_rule`.
+
+        Args:
+            glyph: Glyph name.
+            side: "left" or "right". If None, checks any side.
+        """
+        sides = self._broken.get(glyph)
+        if not sides:
+            return False
+        return True if side is None else side in sides
+
+    def get_broken(self) -> dict[str, list[str]]:
+        """
+        Get all broken rule sides.
+
+        Returns:
+            {glyph: [sides]}, sides in "left", "right" order.
+        """
+        return {
+            glyph: [side for side in ("left", "right") if side in sides]
+            for glyph, sides in sorted(self._broken.items())
+            if sides
+        }
+
+    def mark_broken(self, glyph: str, side: str) -> bool:
+        """
+        Mark a rule side as broken. The rule text is kept.
+
+        Args:
+            glyph: Glyph name.
+            side: "left", "right", or "both".
+
+        Returns:
+            True if any side was newly marked. Sides without a rule are
+            ignored.
+        """
+        changed = False
+        for one_side in _expand_side(side):
+            if self.has_rule(glyph, one_side) and not self.is_broken(glyph, one_side):
+                self._broken.setdefault(glyph, set()).add(one_side)
+                changed = True
+        if changed:
+            self._save_to_font()
+        return changed
+
+    def restore_rule(self, glyph: str, side: str) -> bool:
+        """
+        Restore a broken rule side (clear the broken flag).
+
+        This only changes the flag. To bring the margin back in line, plan
+        it with `plan_restore(source, manager, glyph, side)` and apply it.
+
+        Args:
+            glyph: Glyph name.
+            side: "left", "right", or "both".
+
+        Returns:
+            True if any side was broken.
+        """
+        changed = self._clear_broken(glyph, side)
+        if changed:
+            self._save_to_font()
+        return changed
+
+    def _clear_broken(self, glyph: str, side: str) -> bool:
+        sides = self._broken.get(glyph)
+        if not sides:
+            return False
+        changed = False
+        for one_side in _expand_side(side):
+            if one_side in sides:
+                sides.discard(one_side)
+                changed = True
+        if not sides:
+            del self._broken[glyph]
+        return changed
+
+    # =========================================================================
     # Modification Methods
     # =========================================================================
 
@@ -326,6 +432,7 @@ class MetricsRulesManager:
             self._rules[glyph]["right"] = rule
         else:
             self._rules.setdefault(glyph, {})[side] = rule
+        self._clear_broken(glyph, side)
 
         self._rebuild_caches()
         self._save_to_font()
@@ -351,12 +458,13 @@ class MetricsRulesManager:
             old_rule = old_left
         else:
             old_rule = self._rules[glyph].pop(side, None)
+        cleared = self._clear_broken(glyph, side)
 
         # Clean up empty glyph entry
         if not self._rules.get(glyph):
             del self._rules[glyph]
 
-        if old_rule is not None:
+        if old_rule is not None or cleared:
             self._rebuild_caches()
             self._save_to_font()
 
@@ -373,6 +481,7 @@ class MetricsRulesManager:
             Dict of removed rules or None if no rules existed.
         """
         old_rules = self._rules.pop(glyph, None)
+        self._broken.pop(glyph, None)
         if old_rules:
             self._rebuild_caches()
             self._save_to_font()
@@ -387,6 +496,7 @@ class MetricsRulesManager:
         """
         old_rules = self._rules.copy()
         self._rules.clear()
+        self._broken.clear()
         self._rebuild_caches()
         self._save_to_font()
         return old_rules
@@ -647,3 +757,28 @@ def _coerce_rules(data: Any) -> dict[str, dict[str, str]]:
     return {
         glyph: dict(sides) for glyph, sides in data.items() if isinstance(sides, dict)
     }
+
+
+def _coerce_broken(
+    data: Any, rules: dict[str, dict[str, str]]
+) -> dict[str, set[str]]:
+    """Read the "broken" key of a lib value, keeping only sides with a rule."""
+    if not isinstance(data, dict) or not isinstance(data.get("rules"), dict):
+        return {}
+    broken = data.get("broken")
+    if not isinstance(broken, dict):
+        return {}
+    result: dict[str, set[str]] = {}
+    for glyph, sides in broken.items():
+        if isinstance(sides, str):
+            sides = [sides]
+        if not isinstance(sides, (list, tuple, set)):
+            continue
+        kept = {side for side in sides if side in rules.get(glyph, {})}
+        if kept:
+            result[glyph] = kept
+    return result
+
+
+def _expand_side(side: str) -> tuple[str, ...]:
+    return ("left", "right") if side == "both" else (side,)
