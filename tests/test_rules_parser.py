@@ -136,29 +136,21 @@ class TestRuleParserInvalid:
         with pytest.raises(RuleParseError, match="Empty rule"):
             self.parser.parse("", "left")
 
-    def test_no_equals(self):
-        with pytest.raises(RuleParseError, match="must start with '='"):
-            self.parser.parse("A", "left")
+    def test_bare_name_with_arithmetic(self):
+        with pytest.raises(RuleParseError, match="must be a glyph name"):
+            self.parser.parse("A+10", "left")
 
     def test_only_equals(self):
-        with pytest.raises(RuleParseError, match="Invalid rule syntax"):
+        with pytest.raises(RuleParseError, match="Empty rule"):
             self.parser.parse("=", "left")
-
-    def test_double_equals(self):
-        with pytest.raises(RuleParseError, match="Invalid rule syntax"):
-            self.parser.parse("==A", "left")
-
-    def test_equals_with_number_only(self):
-        with pytest.raises(RuleParseError, match="Invalid rule syntax"):
-            self.parser.parse("=10", "left")
 
     def test_invalid_operator_position(self):
         with pytest.raises(RuleParseError, match="Invalid rule syntax"):
             self.parser.parse("=+A", "left")
 
-    def test_glyph_starting_with_number(self):
+    def test_two_glyphs(self):
         with pytest.raises(RuleParseError, match="Invalid rule syntax"):
-            self.parser.parse("=1A", "left")
+            self.parser.parse("=H+O", "left")
 
     def test_missing_operand(self):
         with pytest.raises(RuleParseError, match="Invalid rule syntax"):
@@ -208,10 +200,10 @@ class TestRuleParserValidateSyntax:
         assert is_valid is False
         assert "Empty rule" in error
 
-    def test_invalid_no_equals(self):
+    def test_bare_name_is_valid(self):
         is_valid, error = self.parser.validate_syntax("A")
-        assert is_valid is False
-        assert "must start with '='" in error
+        assert is_valid is True
+        assert error is None
 
     def test_invalid_syntax(self):
         is_valid, error = self.parser.validate_syntax("=")
@@ -242,7 +234,7 @@ class TestRuleParserExtractReferencedGlyph:
         assert glyph is None
 
     def test_invalid_rule(self):
-        glyph = self.parser.extract_referenced_glyph("invalid")
+        glyph = self.parser.extract_referenced_glyph("=H+O")
         assert glyph is None
 
     def test_complex_glyph_name(self):

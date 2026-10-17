@@ -7,7 +7,11 @@ parsed rules, validation results, and unified issue reporting.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+
+# A glyph name ending like an operation: "a-5", "uni0410-1"
+_TRAILING_NUMBER = re.compile(r"-\s*(?:\d+(?:\.\d+)?|\.\d+)$")
 
 # =============================================================================
 # Issue Codes
@@ -35,6 +39,8 @@ W_MULTI_BODY = "W09"
 W_RULE_OVERRIDDEN = "W10"
 W_EMPTY_GLYPH = "W11"
 W_EVALUATION_FAILED = "W12"
+W_AMBIGUOUS_NAME = "W13"
+W_WIDTH_RIGHT_CONFLICT = "W14"
 
 # Info codes
 I_SINGLE_COMPONENT = "I01"
@@ -55,6 +61,8 @@ ISSUE_MESSAGES = {
     W_RULE_OVERRIDDEN: "Edit overrides rule {rule}",
     W_EMPTY_GLYPH: "{role} glyph {name} has no outline",
     W_EVALUATION_FAILED: "Rule cannot be evaluated: {error}",
+    W_AMBIGUOUS_NAME: "Read as {name} {operator} {operand}, but glyph {glyph_name} exists",
+    W_WIDTH_RIGHT_CONFLICT: "Right rule is ignored: the width rule takes precedence",
     I_SINGLE_COMPONENT: "Single component",
 }
 
@@ -348,6 +356,45 @@ def create_evaluation_failed_warning(
     )
 
 
+def create_ambiguous_name_warning(
+    glyph: str, side: str, rule: str, parsed: ParsedRule, glyph_name: str
+) -> RuleIssue:
+    """Create a warning for "=a-5" when a glyph named "a-5" exists."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_AMBIGUOUS_NAME,
+        message=ISSUE_MESSAGES[W_AMBIGUOUS_NAME].format(
+            name=parsed.source_glyph,
+            operator=parsed.operator,
+            operand=format_number(parsed.operand or 0),
+            glyph_name=glyph_name,
+        ),
+        severity=SEVERITY_WARNING,
+        details={"side": side, "rule": rule, "glyph_name": glyph_name},
+    )
+
+
+def create_width_right_conflict_warning(
+    glyph: str, width_rule: str, right_rule: str
+) -> RuleIssue:
+    """Create a warning for a glyph with both a width and a right rule."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_WIDTH_RIGHT_CONFLICT,
+        message=ISSUE_MESSAGES[W_WIDTH_RIGHT_CONFLICT],
+        severity=SEVERITY_WARNING,
+        details={"side": "right", "rule": right_rule, "width_rule": width_rule},
+    )
+
+
+def format_number(value: float) -> str:
+    """Shortest text for a rule number: 10, 1.5, -20."""
+    value = float(value)
+    if value.is_integer():
+        return str(int(value))
+    return repr(value)
+
+
 # =============================================================================
 # Parsed Rule
 # =============================================================================
@@ -366,12 +413,14 @@ class ParsedRule:
         operator: Arithmetic operator: None, "+", "-", "*", "/".
         operand: Value for arithmetic operation.
         is_symmetry: True for =| pattern (RSB = LSB of same glyph).
+        constant: Fixed value for =40 (no source glyph).
 
     Examples:
         "=A"     -> ParsedRule(source_glyph="A", source_side="same", ...)
         "=A+10"  -> ParsedRule(source_glyph="A", operator="+", operand=10, ...)
         "=|"     -> ParsedRule(source_glyph=None, is_symmetry=True, ...)
-        "=H|"    -> ParsedRule(source_glyph="H", source_side="opposite", ...)
+        "=|H"    -> ParsedRule(source_glyph="H", source_side="opposite", ...)
+        "=40"    -> ParsedRule(source_glyph=None, constant=40, ...)
     """
 
     source_glyph: str | None
@@ -379,13 +428,42 @@ class ParsedRule:
     operator: str | None = None
     operand: float | None = None
     is_symmetry: bool = False
+    constant: float | None = None
+
+    @property
+    def is_constant(self) -> bool:
+        """True for a fixed value (=40)."""
+        return self.constant is not None
 
     def source_side_for(self, target_side: str) -> str:
         """Side of the source glyph this rule reads for ``target_side``."""
+        if target_side == "width":
+            return "width"
         opposite = "right" if target_side == "left" else "left"
         if self.is_symmetry or self.source_side == "opposite":
             return opposite
         return target_side
+
+    def format(self) -> str:
+        """
+        Canonical rule text, which is also valid Glyphs.app syntax.
+
+        Examples: "=A", "=A+10", "=|A", "=|A+20", "=|", "=40".
+        """
+        if self.constant is not None:
+            return "=" + format_number(self.constant)
+        if self.is_symmetry:
+            return "=|"
+        name = self.source_glyph or ""
+        has_operation = self.operator is not None and self.operand is not None
+        if not has_operation and _TRAILING_NUMBER.search(name):
+            # "=a-5" would read as "a" minus 5; spell the glyph "a-5" so
+            # that it reads back as the same glyph.
+            return f"={name}|" if self.source_side == "opposite" else name
+        text = ("=|" if self.source_side == "opposite" else "=") + name
+        if has_operation:
+            text += f"{self.operator}{format_number(self.operand or 0)}"
+        return text
 
     def apply(self, value: float) -> float | None:
         """

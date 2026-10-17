@@ -358,8 +358,32 @@ manager.set_rule("C", "right", "=A*0.5") # A.right * 0.5
 # Symmetry: right = left of same glyph
 manager.set_rule("H", "right", "=|")
 
-# Opposite side from another glyph
-manager.set_rule("B", "right", "=A|")    # B.right = A.left
+# Opposite side from another glyph (Glyphs.app form; "=A|" also accepted)
+manager.set_rule("B", "right", "=|A")    # B.right = A.left
+manager.set_rule("B", "left", "=|A+20")  # B.left = A.right + 20
+
+# Constant, and width rules (advance width)
+manager.set_rule("space", "width", "=250")
+manager.set_rule("zero.tf", "width", "=zero.tf.base")
+```
+
+The syntax is compatible with Glyphs.app metrics keys: glyph names may contain
+`-` (`=a-cy+10`), a bare name means a reference (`A` is `=A`), `==` is read as
+`=`, and spaces around the operator are allowed. Unsupported Glyphs forms
+(`=A@200`, `=+10`, parentheses, `=H+O`) give a parse error with the reason.
+Rules are stored in canonical spelling (`=|H`, `=H+10`).
+
+A width rule takes precedence over a right rule on the same glyph (W14). A left
+edit keeps the width; a right edit breaks the width rule.
+
+### Glyphs.app Metrics Keys
+
+```python
+from ufo_spacing_lib import glyphs_key_from_rule, rules_from_glyphs_keys
+
+# Keys kept by glyphsLib in each glyph's lib; per side, the layer key wins
+rules, issues = rules_from_glyphs_keys(master_font)
+glyphs_key_from_rule("=H|")  # "=|H"
 ```
 
 ### Validation
@@ -499,6 +523,8 @@ result.skip_reasons   # {"Abar": "mixed_contours"}
 | `W10` | Warning | A direct edit overrides the glyph's own rule |
 | `W11` | Warning | Glyph has no outline (edit or rule target/source) |
 | `W12` | Warning | Rule cannot be evaluated (division by zero) |
+| `W13` | Warning | `=a-5` reads as `a` minus 5, but a glyph `a-5` exists |
+| `W14` | Warning | Right rule ignored: the width rule takes precedence |
 | `I01` | Info | Single component composite |
 
 ---

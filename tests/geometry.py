@@ -65,6 +65,7 @@ class GGlyph:
         self.components: list[GComponent] = []
         self.anchors: list[GAnchor] = []
         self.guidelines: list[GGuideline] = []
+        self.lib: dict[str, Any] = {}
         self.changed_count = 0
 
     # -- building ------------------------------------------------------------

@@ -13,8 +13,9 @@ METRICS_RULES_VERSION = 1
 # Rule sides
 SIDE_LEFT = "left"
 SIDE_RIGHT = "right"
+SIDE_WIDTH = "width"
 SIDE_BOTH = "both"
 
 # Source side indicators (used in ParsedRule)
 SOURCE_SIDE_SAME = "same"      # Same side as target (default)
-SOURCE_SIDE_OPPOSITE = "opposite"  # Opposite side (for =H| syntax)
+SOURCE_SIDE_OPPOSITE = "opposite"  # Opposite side (for =|H syntax)

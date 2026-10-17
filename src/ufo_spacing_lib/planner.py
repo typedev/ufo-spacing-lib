@@ -45,7 +45,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
-from .rules_constants import SIDE_LEFT, SIDE_RIGHT
+from .rules_constants import SIDE_LEFT, SIDE_RIGHT, SIDE_WIDTH
 from .rules_core import (
     ParsedRule,
     RuleIssue,
@@ -66,6 +66,9 @@ EPSILON = 1e-9
 REASON_EDIT = "edit"
 
 _SIDES = (SIDE_LEFT, SIDE_RIGHT)
+# Rule sides in evaluation order: a left rule changes the advance, so the
+# width rule comes after it.
+_RULE_SIDES = (SIDE_LEFT, SIDE_RIGHT, SIDE_WIDTH)
 
 
 # =============================================================================
@@ -354,16 +357,20 @@ def _as_manager(rules: Any, source: Any) -> MetricsRulesManager | None:
 
 
 def _check_side(side: str) -> None:
-    if side not in _SIDES:
-        raise ValueError(f"side must be 'left' or 'right', not {side!r}")
+    if side not in _RULE_SIDES:
+        raise ValueError(f"side must be 'left', 'right' or 'width', not {side!r}")
 
 
 def _is_self_referencing(glyph: str, parsed: ParsedRule) -> bool:
     return parsed.is_symmetry or parsed.source_glyph == glyph
 
 
-def _rule_source(glyph: str, side: str, parsed: ParsedRule) -> tuple[str, str]:
-    """The (glyph, side) a rule reads."""
+def _rule_source(
+    glyph: str, side: str, parsed: ParsedRule
+) -> tuple[str, str] | None:
+    """The (glyph, side) a rule reads, or None for a constant."""
+    if parsed.is_constant:
+        return None
     name = glyph if parsed.is_symmetry else parsed.source_glyph
     assert name is not None
     return name, parsed.source_side_for(side)
@@ -478,28 +485,49 @@ class _Planner:
         return change
 
     def original_margin(self, name: str, side: str) -> float | None:
+        """Margin (or advance, for "width") before the plan."""
         key = (name, side)
         if key not in self._original:
-            value = self.read(self.source[name], side) if self.exists(name) else None
+            value = None
+            if self.exists(name):
+                glyph = self.source[name]
+                value = glyph.width if side == SIDE_WIDTH else self.read(glyph, side)
             self._original[key] = None if value is None else float(value)
         return self._original[key]
 
     def margin(self, name: str, side: str) -> float | None:
-        """Margin after the changes planned so far."""
+        """Margin (or advance, for "width") after the changes planned so far."""
         value = self.original_margin(name, side)
         if value is None:
             return None
+        return value + self.delta(name, side)
+
+    def delta(self, name: str, side: str) -> float:
         change = self.changes.get(name)
         if change is None:
-            return value
-        return value + (change.left_delta if side == SIDE_LEFT else change.right_delta)
+            return 0.0
+        if side == SIDE_LEFT:
+            return change.left_delta
+        if side == SIDE_RIGHT:
+            return change.right_delta
+        return change.width_delta
 
     def side_changed(self, name: str, side: str) -> bool:
-        change = self.changes.get(name)
-        if change is None:
-            return False
-        delta = change.left_delta if side == SIDE_LEFT else change.right_delta
-        return abs(delta) >= EPSILON
+        return abs(self.delta(name, side)) >= EPSILON
+
+    def width_rule_active(self, glyph: str) -> bool:
+        """An active width rule governs the advance; the right rule yields."""
+        assert self.manager is not None
+        return (
+            self.manager.get_parsed_rule(glyph, SIDE_WIDTH) is not None
+            and not self.manager.is_broken(glyph, SIDE_WIDTH)
+        )
+
+    def governing_side(self, glyph: str, side: str) -> str:
+        """The rule side an edit of `side` overrides."""
+        if self.manager is not None and side == SIDE_RIGHT and self.width_rule_active(glyph):
+            return SIDE_WIDTH
+        return side
 
     # -- events --------------------------------------------------------------
 
@@ -550,7 +578,11 @@ class _Planner:
         rule = self.manager.get_rule(glyph, side) or ""
         if parsed is None:
             return None
-        source_name, source_side = _rule_source(glyph, side, parsed)
+        source = _rule_source(glyph, side, parsed)
+        if source is None:
+            assert parsed.constant is not None
+            return float(round(parsed.constant)) if self.round_values else parsed.constant
+        source_name, source_side = source
         if not self.exists(source_name):
             self.issues.append(
                 create_missing_glyph_warning(glyph, side, rule, source_name)
@@ -596,10 +628,17 @@ class _Planner:
             self.widen(glyph, delta, reason)
 
     def rule_sides(self, glyph: str) -> list[tuple[str, ParsedRule]]:
-        """A glyph's parsed rules, self-referencing sides last."""
+        """
+        A glyph's parsed rules in evaluation order: left, right, width,
+        self-referencing sides last. A right rule next to an active width
+        rule is left out: the width rule takes precedence.
+        """
         assert self.manager is not None
+        width_rules = self.width_rule_active(glyph)
         sides = []
-        for side in _SIDES:
+        for side in _RULE_SIDES:
+            if side == SIDE_RIGHT and width_rules:
+                continue
             parsed = self.manager.get_parsed_rule(glyph, side)
             if parsed is not None:
                 sides.append((side, parsed))
@@ -616,7 +655,10 @@ class _Planner:
         Run the rules of `nodes` in dependency order.
 
         A rule side runs when it is in `forced` or when the margin it reads
-        has changed in this plan. Broken sides never run unless forced.
+        has changed in this plan. A width rule also runs when its own glyph's
+        advance changed (a left edit or rule): left margin and width are
+        kept, the right margin absorbs the change, as in Glyphs. Broken
+        sides never run unless forced.
         Glyphs caught in a cycle are skipped with one E02 issue per cycle.
         """
         assert self.manager is not None
@@ -632,8 +674,14 @@ class _Planner:
                     self.apply_rule(glyph, side)
                 elif self.manager.is_broken(glyph, side):
                     continue
-                elif self.side_changed(*_rule_source(glyph, side, parsed)):
+                elif self._source_changed(glyph, side, parsed):
                     self.apply_rule(glyph, side)
+
+    def _source_changed(self, glyph: str, side: str, parsed: ParsedRule) -> bool:
+        if side == SIDE_WIDTH and self.side_changed(glyph, SIDE_WIDTH):
+            return True
+        source = _rule_source(glyph, side, parsed)
+        return source is not None and self.side_changed(*source)
 
     def plan(self) -> Plan:
         changes = [c for c in self.changes.values() if not c.is_noop]
@@ -663,7 +711,8 @@ def plan_margin_edit(
     Args:
         source: Glyph source (fontParts/defcon font or layer).
         glyph_name: Glyph to edit.
-        side: "left" or "right".
+        side: "left", "right", or "width" (the advance; delta/value are
+            then advance values, read from ``glyph.width``).
         delta: Change of the margin. Exactly one of delta/value.
         value: Target margin, measured by `margins`.
         rules: Rules dict ({glyph: {side: rule}} or the lib value), a
@@ -689,6 +738,9 @@ def plan_margin_edit(
           rule reads the glyph itself (``=|``). Its dependents cascade as
           usual and read its new margin.
         - Broken rule sides are never evaluated.
+        - Width rules: a left edit keeps an active width rule (the right
+          margin absorbs the change); a right edit overrides it (W10 and
+          `plan.breaks` name the "width" side).
         - A glyph without outline has no margin: a delta edit changes its
           width only, a value edit gives a W11 issue and no change.
     """
@@ -722,26 +774,32 @@ def plan_margin_edit(
     if manager is None:
         return planner.plan()
 
-    own_rule = manager.get_rule(glyph_name, side)
+    # A right edit next to an active width rule overrides the width rule.
+    governing = planner.governing_side(glyph_name, side)
+    own_rule = manager.get_rule(glyph_name, governing)
     if (
         own_rule is not None
-        and manager.get_parsed_rule(glyph_name, side) is not None
-        and not manager.is_broken(glyph_name, side)
+        and manager.get_parsed_rule(glyph_name, governing) is not None
+        and not manager.is_broken(glyph_name, governing)
     ):
-        planner.breaks.append((glyph_name, side))
+        planner.breaks.append((glyph_name, governing))
+        actual = planner.margin(glyph_name, governing)
+        assert actual is not None
         planner.issues.append(
             create_rule_overridden_warning(
                 glyph_name,
-                side,
+                governing,
                 own_rule,
-                planner.evaluate(glyph_name, side),
-                current + amount,
+                planner.evaluate(glyph_name, governing),
+                actual,
             )
         )
 
     nodes = manager.get_affected_glyphs(glyph_name)
     nodes.add(glyph_name)
-    planner.cascade(nodes, forced=set(), skip={(glyph_name, side)})
+    planner.cascade(
+        nodes, forced=set(), skip={(glyph_name, side), (glyph_name, governing)}
+    )
     return planner.plan()
 
 
@@ -767,7 +825,7 @@ def plan_restore(
         source: Glyph source.
         rules: Rules dict or MetricsRulesManager.
         glyph_name: Glyph whose rule to restore.
-        side: "left", "right", or "both".
+        side: "left", "right", "width", or "both" (left and right).
         reverse_map: Cached ``{base: [composites]}``.
         margins: Margin reader.
         round_values: Round rule results to integers.
@@ -823,7 +881,7 @@ def plan_sync(
     forced = {
         (glyph, side)
         for glyph in targets
-        for side in _SIDES
+        for side in _RULE_SIDES
         if manager.has_rule(glyph, side) and not manager.is_broken(glyph, side)
     }
     planner.cascade(nodes, forced=forced, skip=set())
@@ -872,7 +930,10 @@ def check_rules(
     for glyph in sorted(targets):
         if not planner.exists(glyph):
             continue
-        for side in _SIDES:
+        width_rules = planner.width_rule_active(glyph)
+        for side in _RULE_SIDES:
+            if side == SIDE_RIGHT and width_rules:
+                continue  # yields to the width rule (W14 from validate)
             rule = manager.get_rule(glyph, side)
             if rule is None or manager.get_parsed_rule(glyph, side) is None:
                 continue

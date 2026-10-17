@@ -43,7 +43,7 @@ class TestSetMetricsRuleCommand:
         assert self.manager.get_rule("Aacute", "right") == "=A"
 
     def test_set_rule_invalid_syntax(self):
-        cmd = SetMetricsRuleCommand("Aacute", "left", "invalid")
+        cmd = SetMetricsRuleCommand("Aacute", "left", "=H+O")
         result = cmd.execute(self.context, self.managers)
 
         assert not result.success

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-17
+
+### Added
+- Glyphs.app metrics-key syntax in the rule parser:
+  - glyph names with `-` and other characters (`=a-cy`, `=el-cy.loclBGR`). A
+    trailing `op NUMBER` is always the operation, so `=a-5` is `a` minus 5.
+    `validate()` warns (W13) when a glyph `a-5` exists;
+  - the opposite side in Glyphs form, `=|H` and `=|H+20` (`=H|` still
+    accepted);
+  - bare names (`A` means `=A`; the whole text is the name, no arithmetic);
+  - `==` (Glyphs "this master only"), read as `=`;
+  - spaces around the operator (`=H + 10`);
+  - constants (`=40`, `=-20`).
+- Unsupported Glyphs forms give a parse error with the reason: measuring at a
+  height (`=A@200`), auto-alignment offsets (`=+10`), parentheses, several
+  glyphs (`=H+O`), arithmetic on symmetry (`=|+10`).
+- Width rules: a third rule side, `"width"`.
+  - A width rule sets the advance (shift 0) and cascades.
+  - As in Glyphs, an active width rule takes precedence over a right rule,
+    which is ignored and reported as W14 by `validate()`.
+  - A left edit or left rule keeps the width (the right margin absorbs the
+    change); a right edit breaks the width rule (W10, `plan.breaks`).
+  - `plan_margin_edit(side="width")` edits the advance.
+  - Opposite-side rules are parse errors on the width side.
+- `rules_from_glyphs_keys(source, glyph_names=None) -> (rules, issues)` reads
+  the glyphsLib lib keys (`com.schriftgestaltung.Glyphs.{glyph,layer}.
+  {left,right,width}MetricsKey`). Per side, the layer key wins; it never writes
+  the lib.
+- `glyphs_key_from_rule(rule, side="left")`, `ParsedRule.format()` and
+  `RuleParser.format()` return the canonical spelling.
+- Issue codes `W13` (ambiguous name) and `W14` (width and right rule conflict).
+
+### Changed
+- Rules are stored in canonical spelling: `set_rule()` and loading normalize
+  parseable rules (`"A"` -> `"=A"`, `"=H|"` -> `"=|H"`, `"=H + 10"` ->
+  `"=H+10"`). Unparseable text is kept verbatim.
+- A key without `=` is now a glyph reference (Glyphs semantics) instead of a
+  parse error.
+- `set_rule()` validates per side, and accepts `"width"`. `"both"` still means
+  left and right.
+- The rules format version stays 1. 0.6 readers load data with a `"width"` side
+  or the new spellings: they ignore width rules, report the new spellings as
+  per-rule E01 issues, and keep the text when saving.
+
 ## [0.6.0] - 2026-10-16
 
 ### Added

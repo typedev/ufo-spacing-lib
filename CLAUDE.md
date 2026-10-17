@@ -95,7 +95,9 @@ The library uses the Command pattern for all font modifications:
 - Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
 - Broken flags: `"broken": {glyph: [sides]}` next to `"rules"` in the lib value; `mark_broken()`, `restore_rule()`, `is_broken()`, `get_broken()`; `set_rule()`/`remove_rule()` clear the flag
 - `MetricsRulesManager.from_rules(rules, source)` builds a detached manager from a dict on any glyph source (no autosave); `MetricsRulesManager(font)` loads from and autosaves to `font.lib`
-- Supported syntax: `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=H|` (opposite side)
+- Supported syntax (Glyphs.app compatible): `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=|H` (opposite side; legacy `=H|`), `=40` (constant), bare `A`, `==A`; names may contain `-` (a trailing `op NUMBER` is the operation)
+- Sides: `left`, `right`, `width`; an active width rule wins over a right rule (W14); rules are stored in canonical spelling (`ParsedRule.format()`)
+- Glyphs import/export: `rules_from_glyphs_keys()`, `glyphs_key_from_rule()` (`glyphs_keys.py`)
 - Validation via `manager.validate()` returns `ValidationReport` with unified `RuleIssue` list
 - Cascade order computed via topological sort for correct update order
 - Key methods: `set_rule()`, `get_rule()`, `remove_rule()`, `evaluate()`, `get_cascade_order()`
@@ -115,8 +117,8 @@ The library uses the Command pattern for all font modifications:
 
 **Unified Issue Reporting** (`rules_core.py`): Common issue format for validation and generation
 - `RuleIssue` dataclass with `glyph`, `code`, `message`, `severity`, `details`
-- Issue codes: `E01`/`E02` (errors), `W01`-`W12` (warnings), `I01` (info)
-- Planner/generator codes: `W09` multi-body candidate, `W10` edit overrides own rule, `W11` glyph without outline, `W12` rule cannot be evaluated
+- Issue codes: `E01`/`E02` (errors), `W01`-`W14` (warnings), `I01` (info)
+- Planner/generator codes: `W09` multi-body candidate, `W10` edit overrides own rule, `W11` glyph without outline, `W12` rule cannot be evaluated, `W13` ambiguous `=a-5`, `W14` width/right conflict
 - Factory functions: `create_cycle_error()`, `create_missing_glyph_warning()`, etc.
 - Used by both `ValidationReport` and `RuleGenerationResult`
 

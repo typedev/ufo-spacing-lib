@@ -42,7 +42,7 @@ Author:
     Alexander Lubovenko (typedev)
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __author__ = "Alexander Lubovenko"
 
 # Core components
@@ -73,6 +73,14 @@ from .contexts import FontContext
 from .editors.kerning import KerningEditor
 from .editors.margins import MarginsEditor
 from .editors.spacing import SpacingEditor
+
+# Glyphs.app metrics keys
+from .glyphs_keys import (
+    GLYPHS_GLYPH_KEY,
+    GLYPHS_LAYER_KEY,
+    glyphs_key_from_rule,
+    rules_from_glyphs_keys,
+)
 
 # Groups management
 from .groups_core import (
@@ -127,6 +135,7 @@ from .rules_core import (
     E_CYCLE,
     E_PARSE_ERROR,
     I_SINGLE_COMPONENT,
+    W_AMBIGUOUS_NAME,
     W_COMPONENT_WIDER,
     W_EMPTY_GLYPH,
     W_EVALUATION_FAILED,
@@ -138,6 +147,7 @@ from .rules_core import (
     W_MULTI_BODY,
     W_RULE_OVERRIDDEN,
     W_SELF_REFERENCE,
+    W_WIDTH_RIGHT_CONFLICT,
     W_ZERO_WIDTH,
     RuleIssue,
     ValidationReport,
@@ -211,6 +221,13 @@ __all__ = [
     "W_RULE_OVERRIDDEN",
     "W_EMPTY_GLYPH",
     "W_EVALUATION_FAILED",
+    "W_AMBIGUOUS_NAME",
+    "W_WIDTH_RIGHT_CONFLICT",
+    # Glyphs.app metrics keys
+    "rules_from_glyphs_keys",
+    "glyphs_key_from_rule",
+    "GLYPHS_GLYPH_KEY",
+    "GLYPHS_LAYER_KEY",
     "I_SINGLE_COMPONENT",
     # Planner
     "plan_margin_edit",

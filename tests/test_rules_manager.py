@@ -118,7 +118,7 @@ class TestModificationMethods:
 
     def test_set_rule_invalid_syntax(self):
         with pytest.raises(ValueError, match="Invalid rule syntax"):
-            self.manager.set_rule("Aacute", "left", "invalid")
+            self.manager.set_rule("Aacute", "left", "=H+O")
 
     def test_remove_rule(self):
         self.manager.set_rule("Aacute", "left", "=A")

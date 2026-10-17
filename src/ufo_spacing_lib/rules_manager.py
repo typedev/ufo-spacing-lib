@@ -31,10 +31,13 @@ from .rules_core import (
     ParsedRule,
     RuleIssue,
     ValidationReport,
+    create_ambiguous_name_warning,
     create_cycle_error,
     create_missing_glyph_warning,
     create_parse_error,
     create_self_reference_warning,
+    create_width_right_conflict_warning,
+    format_number,
 )
 from .rules_parser import RuleParseError, RuleParser
 
@@ -210,6 +213,8 @@ class MetricsRulesManager:
                 try:
                     parsed = self._parser.parse(rule, side)
                     self._parsed_cache[glyph][side] = parsed
+                    # Keep the canonical spelling ("A" -> "=A", "=H|" -> "=|H")
+                    sides[side] = parsed.format()
 
                     # Build reverse dependency
                     if parsed.source_glyph:
@@ -414,24 +419,28 @@ class MetricsRulesManager:
         """
         Set a rule. Rebuilds caches and saves to font.
 
+        The rule is stored in its canonical spelling (see
+        `ParsedRule.format`): "A" and "==A" become "=A", "=H|" becomes
+        "=|H", "=H + 10" becomes "=H+10".
+
         Args:
             glyph: Glyph name.
-            side: "left", "right", or "both".
-            rule: Rule string (e.g., "=A", "=A+10").
+            side: "left", "right", "width", or "both" (left and right).
+            rule: Rule string (e.g., "=A", "=A+10", "=|H", "=600").
 
         Raises:
-            ValueError: If rule syntax is invalid.
+            ValueError: If rule syntax is invalid for the side.
         """
-        # Validate syntax first
-        is_valid, error = self._parser.validate_syntax(rule)
-        if not is_valid:
-            raise ValueError(f"Invalid rule syntax: {error}")
+        sides = _expand_side(side)
+        canonical = {}
+        for one_side in sides:
+            try:
+                canonical[one_side] = self._parser.parse(rule, one_side).format()
+            except RuleParseError as e:
+                raise ValueError(f"Invalid rule syntax: {e}") from e
 
-        if side == "both":
-            self._rules.setdefault(glyph, {})["left"] = rule
-            self._rules[glyph]["right"] = rule
-        else:
-            self._rules.setdefault(glyph, {})[side] = rule
+        for one_side in sides:
+            self._rules.setdefault(glyph, {})[one_side] = canonical[one_side]
         self._clear_broken(glyph, side)
 
         self._rebuild_caches()
@@ -527,11 +536,10 @@ class MetricsRulesManager:
         for glyph, sides in self._rules.items():
             for side, rule in sides.items():
                 # Check parse errors
-                is_valid, error = self._parser.validate_syntax(rule)
-                if not is_valid:
-                    issues.append(
-                        create_parse_error(glyph, side, rule, error or "Unknown error")
-                    )
+                try:
+                    self._parser.parse(rule, side)
+                except RuleParseError as e:
+                    issues.append(create_parse_error(glyph, side, rule, str(e)))
                     continue
 
                 parsed = self._parsed_cache.get(glyph, {}).get(side)
@@ -555,6 +563,24 @@ class MetricsRulesManager:
                             glyph, side, rule, parsed.source_glyph
                         )
                     )
+
+                # "=a-5" reads as "a" minus 5; warn if a glyph "a-5" exists
+                if parsed.operator == "-" and parsed.source_glyph:
+                    whole = f"{parsed.source_glyph}-{format_number(parsed.operand or 0)}"
+                    if self._glyph_exists(whole):
+                        issues.append(
+                            create_ambiguous_name_warning(
+                                glyph, side, rule, parsed, whole
+                            )
+                        )
+
+            # The width rule takes precedence over the right rule
+            if "width" in sides and "right" in sides:
+                issues.append(
+                    create_width_right_conflict_warning(
+                        glyph, sides["width"], sides["right"]
+                    )
+                )
 
         has_errors = any(i.is_error for i in issues)
 
@@ -628,6 +654,8 @@ class MetricsRulesManager:
         parsed = self._parsed_cache.get(glyph, {}).get(side)
         if not parsed:
             return None
+        if parsed.constant is not None:
+            return parsed.constant
 
         source_glyph = glyph if parsed.is_symmetry else parsed.source_glyph
         if source_glyph is None:
@@ -648,7 +676,13 @@ class MetricsRulesManager:
 
         try:
             g = self._source[glyph]
-            margin: float | None = g.leftMargin if side == "left" else g.rightMargin
+            margin: float | None
+            if side == "width":
+                margin = g.width
+            elif side == "left":
+                margin = g.leftMargin
+            else:
+                margin = g.rightMargin
             return margin
         except (AttributeError, KeyError):
             return None
