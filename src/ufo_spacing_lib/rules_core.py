@@ -41,6 +41,8 @@ W_EMPTY_GLYPH = "W11"
 W_EVALUATION_FAILED = "W12"
 W_AMBIGUOUS_NAME = "W13"
 W_WIDTH_RIGHT_CONFLICT = "W14"
+W_NO_OUTLINE_AT_HEIGHT = "W15"
+W_READER_NO_HEIGHT = "W16"
 
 # Info codes
 I_SINGLE_COMPONENT = "I01"
@@ -63,6 +65,8 @@ ISSUE_MESSAGES = {
     W_EVALUATION_FAILED: "Rule cannot be evaluated: {error}",
     W_AMBIGUOUS_NAME: "Read as {name} {operator} {operand}, but glyph {glyph_name} exists",
     W_WIDTH_RIGHT_CONFLICT: "Right rule is ignored: the width rule takes precedence",
+    W_NO_OUTLINE_AT_HEIGHT: "{role} glyph {name} has no outline at height {height}",
+    W_READER_NO_HEIGHT: "The margin reader cannot measure at a height",
     I_SINGLE_COMPONENT: "Single component",
 }
 
@@ -308,7 +312,7 @@ def create_multi_body_warning(
 
 
 def create_rule_overridden_warning(
-    glyph: str, side: str, rule: str, expected: float | None, actual: float
+    glyph: str, side: str, rule: str, expected: float | None, actual: float | None
 ) -> RuleIssue:
     """Create a warning for a direct edit that overrides the glyph's rule."""
     return RuleIssue(
@@ -387,6 +391,40 @@ def create_width_right_conflict_warning(
     )
 
 
+def create_no_outline_at_height_warning(
+    glyph: str, side: str, rule: str, name: str, role: str, height: float
+) -> RuleIssue:
+    """Create a warning for a beam (=H@200) that misses a glyph's outline."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_NO_OUTLINE_AT_HEIGHT,
+        message=ISSUE_MESSAGES[W_NO_OUTLINE_AT_HEIGHT].format(
+            role=role.capitalize(), name=name, height=format_number(height)
+        ),
+        severity=SEVERITY_WARNING,
+        details={
+            "side": side,
+            "rule": rule,
+            "name": name,
+            "role": role,
+            "height": height,
+        },
+    )
+
+
+def create_reader_no_height_warning(
+    glyph: str, side: str, rule: str, height: float
+) -> RuleIssue:
+    """Create a warning for a rule with a height and a 2-argument reader."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_READER_NO_HEIGHT,
+        message=ISSUE_MESSAGES[W_READER_NO_HEIGHT],
+        severity=SEVERITY_WARNING,
+        details={"side": side, "rule": rule, "height": height},
+    )
+
+
 def format_number(value: float) -> str:
     """Shortest text for a rule number: 10, 1.5, -20."""
     value = float(value)
@@ -414,6 +452,7 @@ class ParsedRule:
         operand: Value for arithmetic operation.
         is_symmetry: True for =| pattern (RSB = LSB of same glyph).
         constant: Fixed value for =40 (no source glyph).
+        at_height: For =H@200: both glyphs are measured at y = 200.
 
     Examples:
         "=A"     -> ParsedRule(source_glyph="A", source_side="same", ...)
@@ -429,6 +468,7 @@ class ParsedRule:
     operand: float | None = None
     is_symmetry: bool = False
     constant: float | None = None
+    at_height: float | None = None
 
     @property
     def is_constant(self) -> bool:
@@ -448,7 +488,8 @@ class ParsedRule:
         """
         Canonical rule text, which is also valid Glyphs.app syntax.
 
-        Examples: "=A", "=A+10", "=|A", "=|A+20", "=|", "=40".
+        Examples: "=A", "=A+10", "=|A", "=|A+20", "=|", "=40",
+        "=A@200+5", "=|A@-50".
         """
         if self.constant is not None:
             return "=" + format_number(self.constant)
@@ -456,7 +497,9 @@ class ParsedRule:
             return "=|"
         name = self.source_glyph or ""
         has_operation = self.operator is not None and self.operand is not None
-        if not has_operation and _TRAILING_NUMBER.search(name):
+        if self.at_height is not None:
+            name += "@" + format_number(self.at_height)
+        elif not has_operation and _TRAILING_NUMBER.search(name):
             # "=a-5" would read as "a" minus 5; spell the glyph "a-5" so
             # that it reads back as the same glyph.
             return f"={name}|" if self.source_side == "opposite" else name

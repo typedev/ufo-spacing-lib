@@ -515,7 +515,8 @@ class TestAngledMargins:
         assert reader(g, "left") == pytest.approx(60)
         assert g.width == pytest.approx(width_before + 10)  # 0.4.3 bug 5
 
-    def test_upright_angle_is_default_reader(self):
-        from ufo_spacing_lib import upright_margins
-
-        assert angled_margins(GSource(), 0) is upright_margins
+    def test_upright_angle_reads_plain_margins(self):
+        s = accent_font()
+        reader = angled_margins(s, 0)
+        assert reader(s["H"], "left") == s["H"].leftMargin
+        assert reader(s["H"], "right", None) == s["H"].rightMargin

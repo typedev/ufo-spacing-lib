@@ -42,11 +42,13 @@ Author:
     Alexander Lubovenko (typedev)
 """
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 __author__ = "Alexander Lubovenko"
 
 # Core components
 # Commands
+# Beam measurement (margins at a height)
+from .beam import beam_margins
 from .commands.base import Command, CommandResult
 from .commands.groups import (
     AddGlyphsToGroupCommand,
@@ -123,6 +125,7 @@ from .planner import (
     build_reverse_component_map,
     check_rules,
     component_shift,
+    margin_reader,
     plan_margin_edit,
     plan_restore,
     plan_sync,
@@ -145,6 +148,8 @@ from .rules_core import (
     W_MISSING_GLYPH,
     W_MIXED_CONTOURS,
     W_MULTI_BODY,
+    W_NO_OUTLINE_AT_HEIGHT,
+    W_READER_NO_HEIGHT,
     W_RULE_OVERRIDDEN,
     W_SELF_REFERENCE,
     W_WIDTH_RIGHT_CONFLICT,
@@ -223,6 +228,8 @@ __all__ = [
     "W_EVALUATION_FAILED",
     "W_AMBIGUOUS_NAME",
     "W_WIDTH_RIGHT_CONFLICT",
+    "W_NO_OUTLINE_AT_HEIGHT",
+    "W_READER_NO_HEIGHT",
     # Glyphs.app metrics keys
     "rules_from_glyphs_keys",
     "glyphs_key_from_rule",
@@ -242,6 +249,8 @@ __all__ = [
     "BrokenRule",
     "MarginReader",
     "upright_margins",
+    "margin_reader",
+    "beam_margins",
     "angled_margins",
     "component_shift",
     "build_reverse_component_map",

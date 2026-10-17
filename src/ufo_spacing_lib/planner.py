@@ -41,6 +41,7 @@ Example:
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
@@ -53,12 +54,17 @@ from .rules_core import (
     create_empty_glyph_warning,
     create_evaluation_failed_warning,
     create_missing_glyph_warning,
+    create_no_outline_at_height_warning,
+    create_reader_no_height_warning,
     create_rule_overridden_warning,
 )
 from .rules_manager import MetricsRulesManager
 
-#: Reads a glyph's margin: ``(glyph, side) -> float | None``.
-MarginReader = Callable[[Any, str], "float | None"]
+#: Reads a glyph's margin: ``(glyph, side, at_height) -> float | None``.
+#: ``at_height`` is None for the whole outline, or the y of a beam for rules
+#: like ``=H@200``. A two-argument reader ``(glyph, side)`` is accepted too;
+#: rules with a height then give a W16 issue and are not applied.
+MarginReader = Callable[..., "float | None"]
 
 #: Differences below this are treated as no change.
 EPSILON = 1e-9
@@ -265,29 +271,43 @@ def upright_margins(glyph: Any, side: str) -> float | None:
     return value
 
 
-def angled_margins(source: Any, italic_angle: float | None) -> MarginReader:
+def margin_reader(source: Any, italic_angle: float | None = None) -> MarginReader:
     """
-    Build a margin reader that measures along the italic angle.
+    Build the library's margin reader, height-aware.
 
-    Components are resolved through `source`. For an upright angle this
-    returns `upright_margins`. Needs fontTools.
+    - ``at_height`` None, upright: ``glyph.leftMargin`` / ``rightMargin``.
+    - ``at_height`` None, italic: margins of the unskewed outline.
+    - ``at_height`` y: a beam at y (`beam.beam_margins`), slanted by the
+      italic angle: left = first crossing - y*slant, right = width - (last
+      crossing - y*slant), slant = -tan(italicAngle).
+
+    Components are resolved through `source`. Italic margins and beams need
+    fontTools.
 
     Args:
         source: Glyph source used to draw components.
-        italic_angle: The font's italicAngle in degrees (negative leans right).
+        italic_angle: The font's italicAngle in degrees (negative leans
+            right); None or 0 for upright.
     """
-    if not italic_angle:
-        return upright_margins
+    if italic_angle:
+        import math
 
-    import math
+        from fontTools.misc.transform import Transform
+        from fontTools.pens.boundsPen import BoundsPen
+        from fontTools.pens.transformPen import TransformPen
 
-    from fontTools.misc.transform import Transform
-    from fontTools.pens.boundsPen import BoundsPen
-    from fontTools.pens.transformPen import TransformPen
+        unskew = Transform(1, 0, math.tan(math.radians(italic_angle)), 1, 0, 0)
 
-    unskew = Transform(1, 0, math.tan(math.radians(italic_angle)), 1, 0, 0)
+    def read(glyph: Any, side: str, at_height: float | None = None) -> float | None:
+        if at_height is not None:
+            from .beam import beam_margins, slant_for_angle
 
-    def read(glyph: Any, side: str) -> float | None:
+            left, right = beam_margins(
+                glyph, at_height, source, slant_for_angle(italic_angle)
+            )
+            return left if side == SIDE_LEFT else right
+        if not italic_angle:
+            return upright_margins(glyph, side)
         pen = BoundsPen(source)
         glyph.draw(TransformPen(pen, unskew))
         if pen.bounds is None:
@@ -296,6 +316,31 @@ def angled_margins(source: Any, italic_angle: float | None) -> MarginReader:
         return float(x_min) if side == SIDE_LEFT else float(glyph.width - x_max)
 
     return read
+
+
+def angled_margins(source: Any, italic_angle: float | None) -> MarginReader:
+    """
+    Build a margin reader that measures along the italic angle.
+
+    Same as `margin_reader(source, italic_angle)`: height-aware, with
+    components resolved through `source`.
+
+    Args:
+        source: Glyph source used to draw components.
+        italic_angle: The font's italicAngle in degrees (negative leans right).
+    """
+    return margin_reader(source, italic_angle)
+
+
+def _accepts_height(reader: Any) -> bool:
+    """True if a margin reader takes a third argument (at_height)."""
+    try:
+        inspect.signature(reader).bind(None, None, None)
+    except TypeError:
+        return False
+    except ValueError:  # no signature available (some builtins)
+        return False
+    return True
 
 
 def component_shift(
@@ -457,12 +502,13 @@ class _Planner:
         self.source = source
         self.manager = manager
         self._reverse_map = reverse_map
-        self.read = margins or upright_margins
+        self.read = margins or margin_reader(source)
+        self.reads_heights = _accepts_height(self.read)
         self.round_values = round_values
         self.changes: dict[str, GlyphChange] = {}
         self.issues: list[RuleIssue] = []
         self.breaks: list[tuple[str, str]] = []
-        self._original: dict[tuple[str, str], float | None] = {}
+        self._original: dict[tuple[str, str, float | None], float | None] = {}
 
     # -- state ---------------------------------------------------------------
 
@@ -484,20 +530,39 @@ class _Planner:
             change = self.changes[name] = GlyphChange(name)
         return change
 
-    def original_margin(self, name: str, side: str) -> float | None:
-        """Margin (or advance, for "width") before the plan."""
-        key = (name, side)
+    def original_margin(
+        self, name: str, side: str, height: float | None = None
+    ) -> float | None:
+        """
+        Margin (or advance, for "width") before the plan; at a height for a
+        beam. Callers check `reads_heights` before asking for a height.
+        """
+        key = (name, side, height)
         if key not in self._original:
             value = None
             if self.exists(name):
                 glyph = self.source[name]
-                value = glyph.width if side == SIDE_WIDTH else self.read(glyph, side)
+                if side == SIDE_WIDTH:
+                    value = glyph.width
+                elif height is not None:
+                    value = self.read(glyph, side, height)
+                elif self.reads_heights:
+                    value = self.read(glyph, side, None)
+                else:
+                    value = self.read(glyph, side)
             self._original[key] = None if value is None else float(value)
         return self._original[key]
 
-    def margin(self, name: str, side: str) -> float | None:
-        """Margin (or advance, for "width") after the changes planned so far."""
-        value = self.original_margin(name, side)
+    def margin(
+        self, name: str, side: str, height: float | None = None
+    ) -> float | None:
+        """
+        Margin (or advance) after the changes planned so far.
+
+        Shifts and width changes are uniform, so a margin at any height
+        changes by the same delta as the whole margin.
+        """
+        value = self.original_margin(name, side, height)
         if value is None:
             return None
         return value + self.delta(name, side)
@@ -588,11 +653,19 @@ class _Planner:
                 create_missing_glyph_warning(glyph, side, rule, source_name)
             )
             return None
-        source_value = self.margin(source_name, source_side)
+        height = parsed.at_height
+        if height is not None and not self.reads_heights:
+            self._add_issue(create_reader_no_height_warning(glyph, side, rule, height))
+            return None
+        source_value = self.margin(source_name, source_side, height)
         if source_value is None:
-            self.issues.append(
-                create_empty_glyph_warning(glyph, side, rule, source_name, "source")
-            )
+            if height is None:
+                issue = create_empty_glyph_warning(glyph, side, rule, source_name, "source")
+            else:
+                issue = create_no_outline_at_height_warning(
+                    glyph, side, rule, source_name, "source", height
+                )
+            self.issues.append(issue)
             return None
         value = parsed.apply(source_value)
         if value is None:
@@ -604,6 +677,36 @@ class _Planner:
             value = float(round(value))
         return value
 
+    def _add_issue(self, issue: RuleIssue) -> None:
+        """Add an issue once (the same rule can be evaluated twice)."""
+        key = (issue.glyph, issue.code, issue.details.get("side"))
+        if not any(
+            (i.glyph, i.code, i.details.get("side")) == key for i in self.issues
+        ):
+            self.issues.append(issue)
+
+    def target_margin(self, glyph: str, side: str) -> float | None:
+        """
+        The target's current margin as its rule measures it (at the rule's
+        height, if any), or None with a W11/W15 issue.
+        """
+        assert self.manager is not None
+        parsed = self.manager.get_parsed_rule(glyph, side)
+        height = parsed.at_height if parsed is not None else None
+        if height is not None and not self.reads_heights:
+            return None  # W16 comes from evaluate()
+        current = self.margin(glyph, side, height)
+        if current is None:
+            rule = self.manager.get_rule(glyph, side) or ""
+            if height is None:
+                issue = create_empty_glyph_warning(glyph, side, rule, glyph, "target")
+            else:
+                issue = create_no_outline_at_height_warning(
+                    glyph, side, rule, glyph, "target", height
+                )
+            self._add_issue(issue)
+        return current
+
     def apply_rule(self, glyph: str, side: str) -> None:
         assert self.manager is not None
         rule = self.manager.get_rule(glyph, side) or ""
@@ -612,11 +715,8 @@ class _Planner:
         target = self.evaluate(glyph, side)
         if target is None:
             return
-        current = self.margin(glyph, side)
+        current = self.target_margin(glyph, side)
         if current is None:
-            self.issues.append(
-                create_empty_glyph_warning(glyph, side, rule, glyph, "target")
-            )
             return
         delta = target - current
         if abs(delta) < EPSILON:
@@ -783,8 +883,7 @@ def plan_margin_edit(
         and not manager.is_broken(glyph_name, governing)
     ):
         planner.breaks.append((glyph_name, governing))
-        actual = planner.margin(glyph_name, governing)
-        assert actual is not None
+        actual = planner.target_margin(glyph_name, governing)
         planner.issues.append(
             create_rule_overridden_warning(
                 glyph_name,
@@ -938,16 +1037,11 @@ def check_rules(
             if rule is None or manager.get_parsed_rule(glyph, side) is None:
                 continue
             expected = planner.evaluate(glyph, side)
-            actual = planner.margin(glyph, side)
+            actual = planner.target_margin(glyph, side)
             if manager.is_broken(glyph, side):
                 status.broken.append(BrokenRule(glyph, side, rule, expected, actual))
                 continue
-            if expected is None:
-                continue
-            if actual is None:
-                planner.issues.append(
-                    create_empty_glyph_warning(glyph, side, rule, glyph, "target")
-                )
+            if expected is None or actual is None:
                 continue
             if abs(expected - actual) > tolerance:
                 status.out_of_sync.append(OutOfSync(glyph, side, rule, expected, actual))

@@ -13,6 +13,9 @@ Supported syntax:
     =|H         Opposite side of another glyph (target LSB = H's RSB)
     =|H+20      Opposite side with arithmetic
     =40         Constant (=-20 too)
+    =H@200      Measured at a height: both the source and the target are
+                measured along the line y = 200 (=H@200+5, =|H@200, =H@-50;
+                "=H+5@200" is read as "=H@200+5")
     ==A         Glyphs "this master only" form, read as =A
     A           Bare name (Glyphs form), read as =A; no arithmetic
     =H|         Legacy opposite-side form, read as =|H
@@ -21,11 +24,12 @@ Glyph names may contain any character except whitespace and | ( ) @ = + * /
 and must not start with "-". So "=a-cy" is the glyph "a-cy". A trailing
 "op NUMBER" is always the operation: "=a-5" is "a" minus 5.
 
-On the "width" side only references, arithmetic and constants are allowed.
+On the "width" side only references, arithmetic and constants are allowed,
+without a height.
 
 Glyphs.app forms that are not supported give a parse error with a reason:
-measuring at a height (=A@200), auto-alignment offsets (=+10), expressions
-with parentheses or several glyphs (=H+O).
+auto-alignment offsets (=+10), expressions with parentheses or several
+glyphs (=H+O), symmetry at a height (=|@200).
 """
 
 from __future__ import annotations
@@ -38,6 +42,12 @@ from .rules_core import ParsedRule
 _NAME = r"[^\s|()@=+*/\-][^\s|()@=+*/]*"
 _NUMBER = r"\d+(?:\.\d+)?|\.\d+"
 _OPERATION = rf"\s*(?P<operator>[-+*/])\s*(?P<operand>{_NUMBER})"
+_NUMBER_ONLY = re.compile(rf"^(?:{_NUMBER})$")
+_HEIGHT = rf"\s*@\s*(?P<height>-?\s*(?:{_NUMBER}))"
+
+
+def _height(text: str | None) -> float | None:
+    return None if text is None else float(text.replace(" ", ""))
 
 
 class RuleParseError(ValueError):
@@ -66,11 +76,22 @@ class RuleParser:
 
     # Body patterns, after the "=" / "==" prefix. The name is lazy, so a
     # trailing operation wins over a "-" inside the name.
-    PATTERN_REFERENCE = re.compile(rf"^(?P<name>{_NAME}?)(?:{_OPERATION})?$")
-    PATTERN_OPPOSITE = re.compile(rf"^\|\s*(?P<name>{_NAME}?)(?:{_OPERATION})?$")
+    # Glyphs order: NAME @HEIGHT op NUM. Also accepted: NAME op NUM @HEIGHT.
+    PATTERN_REFERENCE = re.compile(
+        rf"^(?P<name>{_NAME}?)(?:{_HEIGHT})?(?:{_OPERATION})?$"
+    )
+    PATTERN_REFERENCE_OP_FIRST = re.compile(
+        rf"^(?P<name>{_NAME}?)(?:{_OPERATION}){_HEIGHT}$"
+    )
+    PATTERN_OPPOSITE = re.compile(
+        rf"^\|\s*(?P<name>{_NAME}?)(?:{_HEIGHT})?(?:{_OPERATION})?$"
+    )
+    PATTERN_OPPOSITE_OP_FIRST = re.compile(
+        rf"^\|\s*(?P<name>{_NAME}?)(?:{_OPERATION}){_HEIGHT}$"
+    )
     PATTERN_LEGACY_OPPOSITE = re.compile(rf"^(?P<name>{_NAME})\|$")
     PATTERN_CONSTANT = re.compile(rf"^(?P<sign>-?)\s*(?P<value>{_NUMBER})$")
-    PATTERN_BARE_NAME = re.compile(rf"^{_NAME}$")
+    PATTERN_BARE_NAME = re.compile(rf"^(?P<name>{_NAME})(?:{_HEIGHT})?$")
 
     def parse(self, rule: str, target_side: str) -> ParsedRule:
         """
@@ -100,6 +121,8 @@ class RuleParser:
             parsed.is_symmetry or parsed.source_side == SOURCE_SIDE_OPPOSITE
         ):
             raise RuleParseError("Opposite-side rules are not allowed for width")
+        if target_side == SIDE_WIDTH and parsed.at_height is not None:
+            raise RuleParseError("Measuring at a height (@) is not allowed for width")
         return parsed
 
     def _parse(self, rule: str) -> ParsedRule:
@@ -114,12 +137,17 @@ class RuleParser:
                 raise RuleParseError("Empty rule")
             return self._parse_body(body)
 
-        # Bare key: the whole text is a glyph name (or "|"), no arithmetic.
+        # Bare key: a glyph name (or "|"), optionally @height, no arithmetic.
         if text == "|":
             return ParsedRule(source_glyph=None, source_side=SOURCE_SIDE_SAME, is_symmetry=True)
         self._reject_unsupported(text)
-        if self.PATTERN_BARE_NAME.match(text):
-            return ParsedRule(source_glyph=text, source_side=SOURCE_SIDE_SAME)
+        match = self.PATTERN_BARE_NAME.match(text)
+        if match and not _NUMBER_ONLY.match(match.group("name")):
+            return ParsedRule(
+                source_glyph=match.group("name"),
+                source_side=SOURCE_SIDE_SAME,
+                at_height=_height(match.group("height")),
+            )
         raise RuleParseError(
             f"Invalid rule syntax: '{rule}' (a key without '=' must be a glyph name)"
         )
@@ -146,23 +174,29 @@ class RuleParser:
             )
 
         opposite = body.startswith("|")
-        pattern = self.PATTERN_OPPOSITE if opposite else self.PATTERN_REFERENCE
-        match = pattern.match(body)
+        if opposite:
+            patterns = (self.PATTERN_OPPOSITE, self.PATTERN_OPPOSITE_OP_FIRST)
+        else:
+            patterns = (self.PATTERN_REFERENCE, self.PATTERN_REFERENCE_OP_FIRST)
+        match = patterns[0].match(body) or patterns[1].match(body)
         if not match or not match.group("name"):
             raise RuleParseError(f"Invalid rule syntax: '={body}'")
+        if _NUMBER_ONLY.match(match.group("name")):
+            raise RuleParseError(f"Invalid rule syntax: '={body}' (a constant has no height)")
         operand = match.group("operand")
         return ParsedRule(
             source_glyph=match.group("name"),
             source_side=SOURCE_SIDE_OPPOSITE if opposite else SOURCE_SIDE_SAME,
             operator=match.group("operator"),
             operand=float(operand) if operand is not None else None,
+            at_height=_height(match.group("height")),
         )
 
     @staticmethod
     def _reject_unsupported(body: str) -> None:
         """Raise a specific error for Glyphs forms the library does not support."""
-        if "@" in body:
-            raise RuleParseError("Measuring at a height (@) is not supported")
+        if body.startswith("|") and body[1:].lstrip().startswith("@"):
+            raise RuleParseError("Symmetry (=|) cannot be measured at a height")
         if re.match(rf"^\+\s*(?:{_NUMBER})$", body):
             raise RuleParseError(
                 "Auto-alignment offsets (=+10) are not supported"

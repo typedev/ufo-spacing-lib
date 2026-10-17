@@ -652,6 +652,8 @@ class MetricsRulesManager:
 
         Returns:
             Computed margin value, or None if no rule or evaluation fails.
+            A rule with a height (=H@200) reads the source with an upright
+            beam; for italic margins use the planner with `angled_margins`.
         """
         parsed = self._parsed_cache.get(glyph, {}).get(side)
         if not parsed:
@@ -662,7 +664,14 @@ class MetricsRulesManager:
         source_glyph = glyph if parsed.is_symmetry else parsed.source_glyph
         if source_glyph is None:
             return None
-        source_value = self._get_margin(source_glyph, parsed.source_side_for(side))
+        source_side = parsed.source_side_for(side)
+        if parsed.at_height is not None:
+            # Upright beam; for italic, use the planner with angled_margins()
+            source_value = self._get_margin_at_height(
+                source_glyph, source_side, parsed.at_height
+            )
+        else:
+            source_value = self._get_margin(source_glyph, source_side)
         if source_value is None:
             return None
 
@@ -670,6 +679,17 @@ class MetricsRulesManager:
         if value is None or parsed.operator is None or not rounded:
             return value
         return round(value)
+
+    def _get_margin_at_height(
+        self, glyph: str, side: str, height: float
+    ) -> float | None:
+        """Get the upright margin measured at a height (needs fontTools)."""
+        if not self._glyph_exists(glyph):
+            return None
+        from .beam import beam_margins
+
+        left, right = beam_margins(self._source[glyph], height, self._source)
+        return left if side == "left" else right
 
     def _get_margin(self, glyph: str, side: str) -> float | None:
         """Get upright margin value from the glyph source."""

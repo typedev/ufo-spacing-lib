@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-10-17
+
+### Added
+- Rules measured at a height, as Glyphs.app's `@` metrics keys:
+  - Syntax: `=H@200`, `=d@200+5`, `=H@-50`, `=|H@200`, also with `==` and bare
+    (`H@200`). `=H+5@200` is read as `=H@200+5`, which is the canonical
+    spelling. `ParsedRule.at_height`.
+  - Both the source and the target are measured along the line at that height.
+    The difference is applied as a usual shift (left) or width change (right),
+    and the rule re-fires when the source's margin changes.
+  - `check_rules`, `plan_sync`, `plan_restore` and W10 report height values.
+  - Errors with their own message: `@` on a width rule, `=|@200`, a constant
+    at a height (`=40@200`).
+- Beam measurement (`beam.py`): `beam_margins(glyph, height, source, slant=0)`
+  intersects the drawn outline (components resolved through the source) with
+  a horizontal line. In italic: left = first crossing − y·slant, right =
+  width − (last crossing − y·slant), slant = −tan(italicAngle). Needs
+  fontTools (still optional at import time).
+- Height-aware margin readers: a reader may take `(glyph, side, at_height)`.
+  `margin_reader(source, italic_angle=None)` is the library's reader and the
+  planner's new default; `angled_margins(source, angle)` returns it too.
+  Two-argument readers keep working; a rule with a height then gives W16 and is
+  not applied (never measured without the height).
+- `MetricsRulesManager.evaluate()` measures heights with an upright beam.
+- Issue codes `W15` (no outline at the height, target or source; no change and
+  not out of sync) and `W16` (the margin reader cannot measure at a height).
+- `rules_from_glyphs_keys()` converts `@` keys.
+
+### Changed
+- The planner's default margin reader is `margin_reader(source)`. It reads the
+  same margins as `upright_margins` when no height is involved.
+  `angled_margins(source, 0)` no longer returns `upright_margins` itself.
+- A bare number (`40`) is now a parse error instead of a glyph named "40".
+
 ## [0.7.1] - 2026-10-17
 
 ### Fixed

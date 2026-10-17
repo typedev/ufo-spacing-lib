@@ -373,6 +373,13 @@ The syntax is compatible with Glyphs.app metrics keys: glyph names may contain
 (`=A@200`, `=+10`, parentheses, `=H+O`) give a parse error with the reason.
 Rules are stored in canonical spelling (`=|H`, `=H+10`).
 
+Rules can be measured at a height, as Glyphs' `@` keys: `=d@200+5` reads `d`'s
+right margin along the line y = 200 and measures the target there too, which
+is what glyphs without a stable extreme (`dcroat`) need. The library's reader
+(`margin_reader(source, italic_angle)`) does this with a beam that follows the
+slant in italic. A custom reader may take a third `at_height` argument;
+two-argument readers skip rules with a height (W16).
+
 A width rule takes precedence over a right rule on the same glyph (W14). A left
 edit keeps the width; a right edit breaks the width rule.
 
@@ -525,6 +532,8 @@ result.skip_reasons   # {"Abar": "mixed_contours"}
 | `W12` | Warning | Rule cannot be evaluated (division by zero) |
 | `W13` | Warning | `=a-5` reads as `a` minus 5, but a glyph `a-5` exists |
 | `W14` | Warning | Right rule ignored: the width rule takes precedence |
+| `W15` | Warning | No outline at the rule's height (target or source) |
+| `W16` | Warning | The margin reader cannot measure at a height |
 | `I01` | Info | Single component composite |
 
 ---

@@ -85,8 +85,8 @@ class TestSyntax:
     @pytest.mark.parametrize(
         "rule, reason",
         [
-            ("=A@200", "Measuring at a height"),
-            ("=|A@200", "Measuring at a height"),
+            ("=|@200", "Symmetry \\(=\\|\\) cannot be measured at a height"),
+            ("=40@200", "a constant has no height"),
             ("=+10", "Auto-alignment offsets"),
             ("=(H+O)/2", "parentheses"),
             ("=|+10", "Arithmetic on symmetry"),
@@ -130,11 +130,11 @@ class TestManager:
 
     def test_loading_canonicalizes_and_keeps_unparseable(self):
         m = MetricsRulesManager.from_rules(
-            {"X": {"left": "=H|", "right": "=A@200"}}
+            {"X": {"left": "=H|", "right": "=(A+B)/2"}}
         )
-        assert m.get_all_rules() == {"X": {"left": "=|H", "right": "=A@200"}}
+        assert m.get_all_rules() == {"X": {"left": "=|H", "right": "=(A+B)/2"}}
         lib = m.to_lib_value()
-        assert lib["rules"]["X"] == {"left": "=|H", "right": "=A@200"}
+        assert lib["rules"]["X"] == {"left": "=|H", "right": "=(A+B)/2"}
 
     def test_set_rule_width_rejects_symmetry(self):
         m = MetricsRulesManager.from_rules({})
@@ -158,9 +158,9 @@ class TestManager:
         assert ("Y", W_AMBIGUOUS_NAME) in codes
 
     def test_validate_reports_reason(self):
-        m = MetricsRulesManager.from_rules({"X": {"left": "=A@200"}})
+        m = MetricsRulesManager.from_rules({"X": {"left": "=+10"}})
         [issue] = m.validate().errors
-        assert "Measuring at a height" in issue.message
+        assert "Auto-alignment offsets" in issue.message
 
     def test_evaluate_constant_and_width(self):
         s = accent_font()
@@ -274,7 +274,7 @@ def glyphs_font():
     s["Aring"].lib.update(
         {
             GLYPHS_GLYPH_KEY.format(side="left"): "a-cy",
-            GLYPHS_GLYPH_KEY.format(side="right"): "=A@200",
+            GLYPHS_GLYPH_KEY.format(side="right"): "=+10",
             GLYPHS_GLYPH_KEY.format(side="width"): "=Missing+10",
         }
     )
@@ -299,8 +299,8 @@ class TestConversion:
         }
         by_code = {(i.glyph, i.code): i for i in issues}
         parse = by_code[("Aring", E_PARSE_ERROR)]
-        assert parse.details["rule"] == "=A@200"
-        assert "Measuring at a height" in parse.message
+        assert parse.details["rule"] == "=+10"
+        assert "Auto-alignment offsets" in parse.message
         assert parse.details["level"] == "glyph"
         assert by_code[("Aring", W_MISSING_GLYPH)].details["side"] == "width"
         conflict = by_code[("DZ", W_WIDTH_RIGHT_CONFLICT)]
