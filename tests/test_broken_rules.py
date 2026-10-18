@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tests.geometry import accent_font
 from tests.mocks import MockFont
 from ufo_spacing_lib import (
@@ -204,6 +206,7 @@ class TestStatusAndRestore:
 
 
 class TestGeneratorAndCommands:
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_generator_skips_broken_like_existing(self):
         s = accent_font()
         m = manager(s, {**RULES, "Aring": {"left": "=A"}}, broken={"Aacute": ["left"]})

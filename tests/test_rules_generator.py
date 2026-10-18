@@ -1,6 +1,8 @@
 """Tests for rules_generator module."""
 
 
+import pytest
+
 from tests.mocks import MockFont
 from ufo_spacing_lib.rules_core import (
     I_SINGLE_COMPONENT,
@@ -15,6 +17,13 @@ from ufo_spacing_lib.rules_generator import (
     RuleGenerationResult,
     generate_rules_from_composites,
 )
+
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+
+def test_generator_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="deprecated since 0.9.0"):
+        generate_rules_from_composites(MockFont(["A"]))
 
 
 class TestRuleIssue:

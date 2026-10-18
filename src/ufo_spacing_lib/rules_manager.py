@@ -33,6 +33,7 @@ from .rules_core import (
     ValidationReport,
     create_ambiguous_name_warning,
     create_cycle_error,
+    create_manual_missing_glyph_warning,
     create_missing_glyph_warning,
     create_parse_error,
     create_self_reference_warning,
@@ -86,7 +87,8 @@ class MetricsRulesManager:
                 and saved to `font.lib` unless `rules` is given.
             rules: Rules to use instead of `font.lib`. Either the `rules`
                 value of the lib key ({glyph: {side: rule}}) or the whole
-                lib value ({"version": 1, "rules": {...}}).
+                lib value ({"version": 1, "rules": {...}, "broken": {...},
+                "manual": {...}}).
             source: Glyph source used to read margins and check that
                 glyphs exist: any object with `name in source` and
                 `source[name]` (a font or a layer). Defaults to `font`.
@@ -105,6 +107,9 @@ class MetricsRulesManager:
         # Broken (dormant) rule sides: {glyph: {side}}
         self._broken: dict[str, set[str]] = {}
 
+        # Manual sides (follow nothing, never have a rule): {glyph: {side}}
+        self._manual: dict[str, set[str]] = {}
+
         # Parsed rules cache: {glyph: {side: ParsedRule}}
         self._parsed_cache: dict[str, dict[str, ParsedRule]] = {}
 
@@ -114,6 +119,7 @@ class MetricsRulesManager:
         if rules is not None:
             self._rules = _coerce_rules(rules)
             self._broken = _coerce_broken(rules, self._rules)
+            self._manual = _coerce_manual(rules, self._rules)
         else:
             # Load existing rules from font
             self._load_from_font()
@@ -164,6 +170,7 @@ class MetricsRulesManager:
 
         self._rules = _coerce_rules(data)
         self._broken = _coerce_broken(data, self._rules)
+        self._manual = _coerce_manual(data, self._rules)
 
     def to_lib_value(self) -> dict[str, Any]:
         """
@@ -171,8 +178,9 @@ class MetricsRulesManager:
 
         Returns:
             {"version": 1, "rules": {glyph: {side: rule}}} plus
-            "broken": {glyph: [sides]} when any rule side is broken.
-            0.5 readers take only "rules" and ignore "broken".
+            "broken": {glyph: [sides]} when any rule side is broken and
+            "manual": {glyph: [sides]} when any side is manual (0.9).
+            0.5 readers take only "rules" and ignore the other keys.
         """
         value: dict[str, Any] = {
             "version": METRICS_RULES_VERSION,
@@ -183,6 +191,9 @@ class MetricsRulesManager:
         broken = self.get_broken()
         if broken:
             value["broken"] = broken
+        manual = self.get_manual()
+        if manual:
+            value["manual"] = manual
         return value
 
     def save(self) -> None:
@@ -401,16 +412,82 @@ class MetricsRulesManager:
         return changed
 
     def _clear_broken(self, glyph: str, side: str) -> bool:
-        sides = self._broken.get(glyph)
+        return _discard_sides(self._broken, glyph, side)
+
+    # =========================================================================
+    # Manual sides
+    # =========================================================================
+
+    def is_manual(self, glyph: str, side: str | None = None) -> bool:
+        """
+        Check if a side is manual: it has no rule and follows nothing.
+
+        A manual side is never given a rule by the generator (with
+        `skip_existing_rules=True`). The planner treats it as any side
+        without a rule: it only gets compensation.
+
+        Args:
+            glyph: Glyph name.
+            side: "left", "right" or "width". If None, checks any side.
+        """
+        sides = self._manual.get(glyph)
         if not sides:
             return False
+        return True if side is None else side in sides
+
+    def get_manual(self) -> dict[str, list[str]]:
+        """
+        Get all manual sides.
+
+        Returns:
+            {glyph: [sides]}, sides in "left", "right", "width" order.
+            A glyph never maps to an empty list.
+        """
+        result = {}
+        for glyph, sides in sorted(self._manual.items()):
+            ordered = [side for side in _RULE_SIDES if side in sides]
+            if ordered:
+                result[glyph] = ordered
+        return result
+
+    def mark_manual(self, glyph: str, side: str) -> bool:
+        """
+        Mark a side as manual. A side with a rule (active or broken) is
+        refused: remove the rule first.
+
+        Args:
+            glyph: Glyph name.
+            side: "left", "right", "width", or "both" (left and right).
+
+        Returns:
+            True if any side was newly marked.
+        """
         changed = False
         for one_side in _expand_side(side):
-            if one_side in sides:
-                sides.discard(one_side)
-                changed = True
-        if not sides:
-            del self._broken[glyph]
+            if one_side not in _RULE_SIDES:
+                continue
+            if self.has_rule(glyph, one_side) or self.is_manual(glyph, one_side):
+                continue
+            self._manual.setdefault(glyph, set()).add(one_side)
+            changed = True
+        if changed:
+            self._save_to_font()
+        return changed
+
+    def clear_manual(self, glyph: str, side: str) -> bool:
+        """
+        Clear the manual marker of a side.
+
+        Args:
+            glyph: Glyph name.
+            side: "left", "right", "width", or "both" (left and right).
+
+        Returns:
+            True if any side was manual.
+        """
+        changed = _discard_sides(self._manual, glyph, side)
+        if changed:
+            self._save_to_font()
         return changed
 
     # =========================================================================
@@ -444,6 +521,7 @@ class MetricsRulesManager:
         for one_side in sides:
             self._rules.setdefault(glyph, {})[one_side] = canonical[one_side]
         self._clear_broken(glyph, side)
+        _discard_sides(self._manual, glyph, side)
 
         self._rebuild_caches()
         self._save_to_font()
@@ -525,6 +603,7 @@ class MetricsRulesManager:
         - Circular dependencies
         - Missing referenced glyphs
         - Self-references
+        - Manual markers on missing glyphs (W17)
 
         Returns:
             ValidationReport with detailed results.
@@ -583,6 +662,14 @@ class MetricsRulesManager:
                         glyph, sides["width"], sides["right"]
                     )
                 )
+
+        # A manual marker on a glyph the source does not have
+        if self._source is not None:
+            for glyph, manual_sides in self.get_manual().items():
+                if not self._glyph_exists(glyph):
+                    issues.append(
+                        create_manual_missing_glyph_warning(glyph, manual_sides)
+                    )
 
         has_errors = any(i.is_error for i in issues)
 
@@ -800,16 +887,23 @@ class MetricsRulesManager:
         return sum(len(sides) for sides in self._rules.values())
 
     def __bool__(self) -> bool:
-        """Return True if any rules exist."""
+        """Return True if any rules exist (manual markers do not count)."""
         return len(self._rules) > 0
+
+
+def _is_lib_value(data: Any) -> bool:
+    """True for the whole lib value, False for a bare {glyph: {side: rule}}."""
+    return isinstance(data, dict) and isinstance(data.get("version"), int)
 
 
 def _coerce_rules(data: Any) -> dict[str, dict[str, str]]:
     """Copy rules from either the lib value or its `rules` dict."""
     if not isinstance(data, dict):
         return {}
-    if isinstance(data.get("version"), int) and isinstance(data.get("rules"), dict):
-        data = data["rules"]
+    if _is_lib_value(data):
+        data = data.get("rules")
+        if not isinstance(data, dict):
+            return {}
     return {
         glyph: dict(sides) for glyph, sides in data.items() if isinstance(sides, dict)
     }
@@ -819,18 +913,36 @@ def _coerce_broken(
     data: Any, rules: dict[str, dict[str, str]]
 ) -> dict[str, set[str]]:
     """Read the "broken" key of a lib value, keeping only sides with a rule."""
-    if not isinstance(data, dict) or not isinstance(data.get("rules"), dict):
+    return _coerce_sides(
+        data, "broken", lambda glyph, side: side in rules.get(glyph, {})
+    )
+
+
+def _coerce_manual(
+    data: Any, rules: dict[str, dict[str, str]]
+) -> dict[str, set[str]]:
+    """Read the "manual" key of a lib value; a side with a rule is dropped."""
+    return _coerce_sides(
+        data,
+        "manual",
+        lambda glyph, side: side in _RULE_SIDES and side not in rules.get(glyph, {}),
+    )
+
+
+def _coerce_sides(data: Any, key: str, keep: Any) -> dict[str, set[str]]:
+    """Read a {glyph: [sides]} key of a lib value, filtered by keep(glyph, side)."""
+    if not _is_lib_value(data):
         return {}
-    broken = data.get("broken")
-    if not isinstance(broken, dict):
+    value = data.get(key)
+    if not isinstance(value, dict):
         return {}
     result: dict[str, set[str]] = {}
-    for glyph, sides in broken.items():
+    for glyph, sides in value.items():
         if isinstance(sides, str):
             sides = [sides]
         if not isinstance(sides, (list, tuple, set)):
             continue
-        kept = {side for side in sides if side in rules.get(glyph, {})}
+        kept = {side for side in sides if keep(glyph, side)}
         if kept:
             result[glyph] = kept
     return result
@@ -842,3 +954,18 @@ _RULE_SIDES = ("left", "right", "width")
 
 def _expand_side(side: str) -> tuple[str, ...]:
     return ("left", "right") if side == "both" else (side,)
+
+
+def _discard_sides(marks: dict[str, set[str]], glyph: str, side: str) -> bool:
+    """Remove sides from a {glyph: {side}} map. True if any was there."""
+    sides = marks.get(glyph)
+    if not sides:
+        return False
+    changed = False
+    for one_side in _expand_side(side):
+        if one_side in sides:
+            sides.discard(one_side)
+            changed = True
+    if not sides:
+        del marks[glyph]
+    return changed

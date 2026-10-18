@@ -17,6 +17,7 @@ Example:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -366,6 +367,10 @@ def generate_rules_from_composites(
     """
     Generate metrics rules from composite glyph structure.
 
+    .. deprecated:: 0.9.0
+        Rule generation from composite structure will be removed in a
+        future release. Calling this emits a DeprecationWarning.
+
     Analyzes composite glyphs and generates rules where component 0
     (index 0) determines both left and right margins. Never writes rules.
 
@@ -396,6 +401,12 @@ def generate_rules_from_composites(
         >>> print(f"Generated {len(result)} rules")
         >>> print(f"Warnings: {len(result.warnings)}")
     """
+    warnings.warn(
+        "generate_rules_from_composites is deprecated since 0.9.0 and will "
+        "be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     result = RuleGenerationResult()
 
     # Determine which glyphs to process

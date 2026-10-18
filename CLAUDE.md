@@ -94,6 +94,7 @@ The library uses the Command pattern for all font modifications:
 - Manages linked sidebearings with automatic cascade updates
 - Rules stored in `font.lib["com.typedev.spacing.metricsRules"]` with version metadata
 - Broken flags: `"broken": {glyph: [sides]}` next to `"rules"` in the lib value; `mark_broken()`, `restore_rule()`, `is_broken()`, `get_broken()`; `set_rule()`/`remove_rule()` clear the flag
+- Manual sides (0.9.0): `"manual": {glyph: [sides]}` in the lib value, a side without a rule that follows nothing; `mark_manual()`, `clear_manual()`, `is_manual()`, `get_manual()`; exclusive with rules per side (`mark_manual` on a ruled or broken side returns False, `set_rule()` clears the marker, a stored marker on a ruled side is dropped on load); planner/`check_rules` need no special case; `validate()` gives W17 for a marker on a missing glyph
 - `MetricsRulesManager.from_rules(rules, source)` builds a detached manager from a dict on any glyph source (no autosave); `MetricsRulesManager(font)` loads from and autosaves to `font.lib`
 - Supported syntax (Glyphs.app compatible): `=A` (copy), `=A+10` (arithmetic), `=|` (symmetry), `=|H` (opposite side; legacy `=H|`), `=40` (constant), bare `A`, `==A`; names may contain `-` (a trailing `op NUMBER` is the operation)
 - Heights: `=d@200+5` measures source AND target at y=200 (`ParsedRule.at_height`); readers may be `(glyph, side, at_height)`; `margin_reader(source, italic_angle)` is the default (beam in `beam.py`); 2-arg readers give W16 for height rules
@@ -109,7 +110,7 @@ The library uses the Command pattern for all font modifications:
 - `SyncRulesCommand` - batch synchronization of all rules (for deferred updates), wraps `plan_sync`
 - All support undo/redo and multi-font contexts
 
-**Rules Generator** (`rules_generator.py`): Generate rules from composite structure
+**Rules Generator** (`rules_generator.py`): Generate rules from composite structure. **Deprecated since 0.9.0** (DeprecationWarning; will be removed); tests silence the warning with `pytestmark`
 - `generate_rules_from_composites(font)` - analyzes composites and returns `RuleGenerationResult`
 - Component 0 (index 0) determines both left and right margins
 - Returns rules dict + issues list (warnings for edge cases like component extends beyond base)
@@ -118,8 +119,8 @@ The library uses the Command pattern for all font modifications:
 
 **Unified Issue Reporting** (`rules_core.py`): Common issue format for validation and generation
 - `RuleIssue` dataclass with `glyph`, `code`, `message`, `severity`, `details`
-- Issue codes: `E01`/`E02` (errors), `W01`-`W16` (warnings), `I01` (info)
-- Planner/generator codes: `W09` multi-body candidate, `W10` edit overrides own rule, `W11` glyph without outline, `W12` rule cannot be evaluated, `W13` ambiguous `=a-5`, `W14` width/right conflict, `W15` no outline at height, `W16` reader cannot measure heights
+- Issue codes: `E01`/`E02` (errors), `W01`-`W17` (warnings), `I01` (info)
+- Planner/generator codes: `W09` multi-body candidate, `W10` edit overrides own rule, `W11` glyph without outline, `W12` rule cannot be evaluated, `W13` ambiguous `=a-5`, `W14` width/right conflict, `W15` no outline at height, `W16` reader cannot measure heights, `W17` manual marker on a missing glyph
 - Factory functions: `create_cycle_error()`, `create_missing_glyph_warning()`, etc.
 - Used by both `ValidationReport` and `RuleGenerationResult`
 

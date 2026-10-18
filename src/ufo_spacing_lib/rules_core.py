@@ -43,6 +43,7 @@ W_AMBIGUOUS_NAME = "W13"
 W_WIDTH_RIGHT_CONFLICT = "W14"
 W_NO_OUTLINE_AT_HEIGHT = "W15"
 W_READER_NO_HEIGHT = "W16"
+W_MANUAL_MISSING_GLYPH = "W17"
 
 # Info codes
 I_SINGLE_COMPONENT = "I01"
@@ -67,6 +68,7 @@ ISSUE_MESSAGES = {
     W_WIDTH_RIGHT_CONFLICT: "Right rule is ignored: the width rule takes precedence",
     W_NO_OUTLINE_AT_HEIGHT: "{role} glyph {name} has no outline at height {height}",
     W_READER_NO_HEIGHT: "The margin reader cannot measure at a height",
+    W_MANUAL_MISSING_GLYPH: "Manual marker on a missing glyph",
     I_SINGLE_COMPONENT: "Single component",
 }
 
@@ -422,6 +424,17 @@ def create_reader_no_height_warning(
         message=ISSUE_MESSAGES[W_READER_NO_HEIGHT],
         severity=SEVERITY_WARNING,
         details={"side": side, "rule": rule, "height": height},
+    )
+
+
+def create_manual_missing_glyph_warning(glyph: str, sides: list[str]) -> RuleIssue:
+    """Create a warning for a manual marker on a glyph not in the source."""
+    return RuleIssue(
+        glyph=glyph,
+        code=W_MANUAL_MISSING_GLYPH,
+        message=ISSUE_MESSAGES[W_MANUAL_MISSING_GLYPH],
+        severity=SEVERITY_WARNING,
+        details={"sides": list(sides)},
     )
 
 

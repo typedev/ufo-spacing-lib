@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-17
+
+### Added
+- Manual sides: a side without a rule that follows nothing.
+  - Stored in the lib value as `"manual": {glyph: [sides]}` next to `"broken"`
+    (sides `left`, `right`, `width`). Introduced in 0.9.0; older versions drop
+    the key when they save. A lib value with only `"manual"` (no `"rules"`) is
+    read too.
+  - `MetricsRulesManager.mark_manual(glyph, side)`, `clear_manual(glyph, side)`,
+    `is_manual(glyph, side=None)`, `get_manual()`; `side` may be `"both"`.
+  - Exclusive with rules: `mark_manual` on a side with a rule (active or
+    broken) returns False, `set_rule` clears the marker, and a stored marker on
+    a ruled side is dropped on load. `clear_rules_for_glyph` and
+    `clear_all_rules` keep markers.
+  - `validate()`: `W17` (`W_MANUAL_MISSING_GLYPH`) for a marker on a glyph the
+    source does not have.
+  - `SetMetricsRuleCommand` undo restores markers that `set_rule` cleared.
+- The planner, `check_rules` and `plan_sync` need no change: a manual side has
+  no rule, so it only gets compensation and is never out of sync.
+
+### Deprecated
+- `generate_rules_from_composites` (and `RuleGenerationResult`, the `SKIP_*`
+  reasons): rule generation from composite structure will be removed in a
+  future release. Calling it emits a `DeprecationWarning`. Editors that want
+  composites to follow their first component should do it on their side.
+
+### Fixed
+- A lib value with a `"version"` but no `"rules"` dict is no longer read as a
+  bare rules dict.
+
 ## [0.8.0] - 2026-10-17
 
 ### Added

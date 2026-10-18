@@ -478,11 +478,24 @@ in `status.broken`. To bring it back, call `manager.restore_rule(glyph, side)`,
 then apply `plan_restore(source, manager, glyph, side)`. Flags are stored next
 to the rules as `"broken": {glyph: [sides]}`.
 
+Manual sides: `manager.mark_manual(glyph, side)` says a side without a rule
+follows nothing (sides `left`, `right`, `width`, or `both`). A side has either
+a rule (active or broken) or a manual marker: `mark_manual` on a ruled side
+returns False, and `set_rule` clears the marker. The planner treats a manual
+side as any side without a rule (compensation only); `check_rules` and
+`plan_sync` ignore it; `validate()` warns (W17) about a marker on a glyph the
+source does not have. Read them with `is_manual(glyph, side=None)` and
+`get_manual()`, clear one with `clear_manual(glyph, side)`. Stored as
+`"manual": {glyph: [sides]}` (since 0.9.0).
+
 Pass `margins=angled_margins(source, italic_angle)` (or your own
 `(glyph, side) -> float | None`) to read and target angled margins. Rule results
 are not rounded unless `round_values=True`.
 
 ### Generate Rules from Composites
+
+> **Deprecated since 0.9.0**: rule generation from composite structure will be
+> removed in a future release; calling it emits a `DeprecationWarning`.
 
 ```python
 from ufo_spacing_lib import generate_rules_from_composites, I_SINGLE_COMPONENT
@@ -534,6 +547,7 @@ result.skip_reasons   # {"Abar": "mixed_contours"}
 | `W14` | Warning | Right rule ignored: the width rule takes precedence |
 | `W15` | Warning | No outline at the rule's height (target or source) |
 | `W16` | Warning | The margin reader cannot measure at a height |
+| `W17` | Warning | Manual marker on a glyph the source does not have |
 | `I01` | Info | Single component composite |
 
 ---

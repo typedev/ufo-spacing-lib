@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tests.geometry import GSource, accent_font
 from ufo_spacing_lib import (
     W_EXTENDS_RIGHT,
@@ -10,6 +12,8 @@ from ufo_spacing_lib import (
     generate_rules_from_composites,
 )
 from ufo_spacing_lib.rules_generator import SKIP_MIXED_CONTOURS
+
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
 def font():

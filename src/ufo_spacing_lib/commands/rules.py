@@ -62,6 +62,8 @@ class SetMetricsRuleCommand(Command):
         self._previous_rules: dict[int, dict[str, str] | None] = {}
         # Previously broken sides per font for undo: {font_id: [side]}
         self._previous_broken: dict[int, list[str]] = {}
+        # Previously manual sides per font for undo: {font_id: [side]}
+        self._previous_manual: dict[int, list[str]] = {}
 
     @property
     def description(self) -> str:
@@ -99,6 +101,9 @@ class SetMetricsRuleCommand(Command):
                 self.glyph
             )
             self._previous_broken[font_id] = manager.get_broken().get(
+                self.glyph, []
+            )
+            self._previous_manual[font_id] = manager.get_manual().get(
                 self.glyph, []
             )
 
@@ -149,6 +154,8 @@ class SetMetricsRuleCommand(Command):
                     manager.set_rule(self.glyph, side, rule)
             for side in self._previous_broken.get(font_id, []):
                 manager.mark_broken(self.glyph, side)
+            for side in self._previous_manual.get(font_id, []):
+                manager.mark_manual(self.glyph, side)
 
         return CommandResult.ok(f"Restored rules for {self.glyph}")
 

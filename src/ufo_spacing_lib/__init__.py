@@ -144,6 +144,7 @@ from .rules_core import (
     W_EVALUATION_FAILED,
     W_EXTENDS_LEFT,
     W_EXTENDS_RIGHT,
+    W_MANUAL_MISSING_GLYPH,
     W_MISSING_BASE,
     W_MISSING_GLYPH,
     W_MIXED_CONTOURS,
@@ -230,6 +231,7 @@ __all__ = [
     "W_WIDTH_RIGHT_CONFLICT",
     "W_NO_OUTLINE_AT_HEIGHT",
     "W_READER_NO_HEIGHT",
+    "W_MANUAL_MISSING_GLYPH",
     # Glyphs.app metrics keys
     "rules_from_glyphs_keys",
     "glyphs_key_from_rule",
